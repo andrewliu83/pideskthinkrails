@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      PI-Desktop owns a 46px drag band and a minimal three-button window capsule.
+      pi-plugin-chrome=v3 lets the page paint through the band while host-generated
+      holes keep controls clickable. Fixed/sticky surfaces start below the band via
+      var(--pi-plugin-titlebar-height, 46px) — the shared panel-polish.css already
+      reads that variable, so don't add another titlebar.
+    -->
+    <meta name="pi-plugin-chrome" content="v3" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self' file:; style-src 'self' file: 'unsafe-inline'; img-src 'self' file: data:; font-src 'self' file:; connect-src 'none';"
+    />
+    <title>ThinkRail</title>
+    <script>
+      window.__APPEARANCE_CACHE_KEY = "pi.thinkrail.appearance.v1";
+    </script>
+    <script src="./appearance-boot.js"></script>
+    <link rel="stylesheet" href="./panel-polish.css" />
+    <link rel="stylesheet" href="./panel.css" />
+  </head>
+  <body>
+    <div class="tr-app">
+      <div class="tr-top">
+        <nav class="tr-tabs" id="tabs" role="tablist" aria-label="ThinkRail views">
+          <button type="button" class="tr-tab" id="tab-specs" role="tab" aria-selected="true" data-view="specs"></button>
+        </nav>
+        <span class="tr-project" id="project"></span>
+        <span class="tr-chip" id="chip" hidden></span>
+        <button type="button" id="refresh" aria-label="Refresh"></button>
+      </div>
+
+      <p class="tr-note" id="note" hidden></p>
+
+      <section class="tr-split" id="view-specs">
+        <div class="tr-pane narrow">
+          <div class="tr-pane-head">
+            <input type="search" class="tr-input" id="filter" autocomplete="off" spellcheck="false" />
+          </div>
+          <div class="tr-pane-body" id="spec-list"></div>
+        </div>
+        <div
+          class="tr-splitter"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Resize list and detail"
+          tabindex="0"
+          data-splitter
+        ></div>
+        <div class="tr-pane">
+          <div class="tr-pane-head"><strong id="spec-title"></strong></div>
+          <div class="tr-pane-body" id="spec-detail"></div>
+        </div>
+      </section>
+
+    </div>
+
+    <script src="./appearance.js"></script>
+    <script src="./panel.js"></script>
+    <script src="./capsule-retint.js"></script>
+  </body>
+</html>

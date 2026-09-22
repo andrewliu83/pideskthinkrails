@@ -1,0 +1,10 @@
+# Local scratch and build output -- see goal-and-requirements.md: packages/ is
+# generated locally only and is not committed.
+packages/
+.thinkrail/
+.dsh-solpi/
+
+# OS and tooling
+.DS_Store
+node_modules/
+__pycache__/

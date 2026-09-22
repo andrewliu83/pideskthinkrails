@@ -1,0 +1,43 @@
+# Third-party notices
+
+This repository is the PI-Desktop port of the ThinkRail workflow system. Parts of
+it are derived from other open-source projects; the license text that governs a
+part stays with that part (or is named below).
+
+## JetBrains/thinkrail -- MIT
+
+<https://github.com/JetBrains/thinkrail>
+
+- `packages/pi-thinkrail-workflow/skills/**` (the 10 workflow skills, the family
+  meta-layer) and `packages/spec-graph/skills/spec-graph/SKILL.md` are ported
+  into `plugins/pi.thinkrail/skills/**`. Every ported skill file carries a
+  Chinese provenance line naming its upstream path and license at the top.
+- The meta-layer (concept model, skill roles, the 15 meta-rules) is folded into
+  `plugins/pi.thinkrail/skills/writing-workflow-skills.md`, because this host
+  reads exactly one file per skill.
+- The two always-on rules this plugin restates come from
+  `packages/pi-thinkrail-workflow/index.ts` (`WORKFLOW_RULE`) and
+  `packages/spec-graph/index.ts` (`SPEC_RULE`).
+
+## dsh-plugin-thinkrail -- MIT
+
+The immediate predecessor this port was built from (`goal-and-requirements.md`
+names it as `../dshthinkrailspec`), itself a port of JetBrains/thinkrail.
+
+## pi-desktop-plugins -- vendored tooling and renderer adapters
+
+License not stated in the copied files themselves; they are copied verbatim and
+attributed here rather than relicensed.
+
+- `scripts/pack_plugin.py`, `scripts/security_audit.py` -- unmodified copies of
+  the marketplace tooling.
+- `plugins/pi.thinkrail/renderer/appearance.js`,
+  `plugins/pi.thinkrail/renderer/appearance-boot.js`,
+  `plugins/pi.thinkrail/renderer/capsule-retint.js` -- copies of the shared
+  appearance adapter.
+- `reference/**` -- the pinned originals a test compares those copies against.
+
+## yaml (eemeli/yaml) -- ISC
+
+Vendored unmodified at `plugins/pi.thinkrail/lib/vendor/yaml/**`; its license
+text ships alongside it at `plugins/pi.thinkrail/lib/vendor/yaml/LICENSE`.
