@@ -200,6 +200,7 @@ const specCreate = textTool({
 	description:
 		"spec_create — create a new spec file with scaffolded frontmatter (id/type/title/links) and heading stubs. " +
 		"Fails if the file already exists, the id is already in use, or the path is not an indexable root-relative .md path. Edit prose afterward with the write/edit tools.",
+	risk: "medium",
 	parameters: params(
 		{
 			path: {
@@ -282,6 +283,7 @@ const specUpdate = textTool({
 	description:
 		"spec_update — edit a spec's frontmatter only (scalar fields + list entries); never its prose. " +
 		"Preserves the file's field order, comments, and non-dialect fields. Prose is edited with the write/edit tools.",
+	risk: "medium",
 	parameters: params(
 		{
 			id: { type: "string", description: "Id of the spec to update." },
@@ -356,6 +358,7 @@ const specDelete = textTool({
 	name: "spec_delete",
 	description:
 		"spec_delete — delete a spec file by id, to the system trash. Other specs may still reference it afterward — run spec_validate to find dangling links.",
+	risk: "high",
 	parameters: params({ id: { type: "string", description: "Id of the spec to delete." } }, ["id"]),
 	async run(args, exec) {
 		const pi = host();

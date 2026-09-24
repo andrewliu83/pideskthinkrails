@@ -41,10 +41,15 @@ tags: [port, pi-desktop, thinkrail]
 
 ## 验收判据
 
-- `node --test tests/*.test.mjs` 全绿，且包含三项真机检查：宿主的 `plugin-host-process`
-  能装载本插件并跑通 init → panel.invoke → tool.execute → unload；宿主的 `validateManifest`
-  对本 manifest 返回 `{ok: true}`；假宿主按 manifest 的 fs scope 执行（写只允许 `.md` 与
-  `.thinkrail/**`，删只允许本插件写过的文件）。
+- `node --test tests/*.test.mjs` 全绿，且包含**五项**依赖本机 PI-Desktop bundle 的检查（机器上没装时跳过）：
+  ① 宿主 `plugin-host-process` 能装载插件并跑通 init → panel.invoke → tool.execute → unload；② 宿主 `validateManifest` 接受本 manifest；
+  ③ 用 sidecar `# Skills` 渲染函数核对 10 篇技能与描述上限；④ 用宿主 section 名正则与 runner 核对常驻规则投递（包括 `systemPrompt` 是强制整条提示的语义）；
+  ⑤ 从宿主 main bundle 提取并执行 `resolveFsRequest`、realpath containment helpers，以临时 workspace symlink fixture 验证项目外读写被拒。该项控制权限/scope fixture，不代表完整 Electron IPC/授权 UI 测试。
+  假宿主另按 manifest fs scope 验证插件写入边界（写只允许 `.md` 与 `.thinkrail/**`，删只允许本插件写过的文件）。
+- 工作流这一侧（技能正文与常驻规则）与上游 `JetBrains/thinkrail` 的对应关系必须能追到它自己的
+  规格：常驻规则按上游 SPEC 的机制投递——写 `systemPromptOptions.sections[<name>]` 且返回空对象，
+  绝不返回 `systemPrompt`（上游明确不用"强制整条提示"那条路）；技能的每处本地改写都要么在
+  `architecture.md` 里记为载体差异，要么删掉。
 - `python3 scripts/pack_plugin.py plugins/pi.thinkrail` 成功，包 < 2000 文件 / 50 MB。
 - `python3 scripts/security_audit.py --check-packages` 0 blocker；每条 manual-review 信号
   都要在仓库 README 里有一句可核对的实际行为。

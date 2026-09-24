@@ -257,7 +257,7 @@ test("manifest declares the identity, permissions and engines the installer requ
     const entry = manifest.i18n[locale];
     assert.ok(entry.name && entry.description && entry.safetyNotes, `i18n.${locale} is incomplete`);
   }
-  assert.equal(manifest.engines.piDesktop, ">=0.8.0");
+  assert.equal(manifest.engines.piDesktop, ">=0.15.6");
   assert.deepEqual(manifest.permissions, [
     "ui.view",
     "agent.tool.register",
@@ -314,6 +314,16 @@ test("contributes.agentTools matches the tools the plugin actually registers", a
       assert.equal(registered.schema.type, "object");
       assert.equal(registered.schema.additionalProperties, false);
       assert.equal(typeof registered.execute, "function");
+      // 宿主读的是**注册时**描述符里的 risk（`this.tools.set(fullName, { …, risk: descriptor.risk })`）：
+      // manifest 里那份是另一份副本（校验器拿它做校验与安装页展示）。两边不一致时，真正决定审批卡
+      // 上风险标签的是这里，所以这一条必须比对，而不是只校验 manifest。
+      const declaredRisk = manifest.contributes.agentTools.find((entry) => entry.name === registered.name);
+      assert.ok(declaredRisk, `${registered.name} is registered but not declared`);
+      assert.equal(
+        registered.risk,
+        declaredRisk.risk,
+        `${registered.name}: registered risk (${registered.risk}) must match the manifest (${declaredRisk.risk})`,
+      );
     }
   } finally {
     ctx.cleanup();
@@ -703,7 +713,9 @@ test("no plugin source outside lib/vendor touches node:fs, child_process or the 
 //
 // 这是本插件唯一一处跑在 agent 进程里、**不受 fs 网关约束**的代码，所以它比别处更值得被钉住：
 // 声明必须与权限配套；文件必须保持可审阅（无 import / 无 require / 不碰文件系统与网络）；
-// 它必须只挂 before_agent_start，且只**追加**、绝不替换系统提示。
+// 它必须只挂 before_agent_start，并且按上游 SPEC 写明的机制**写命名 section**、返回空对象——
+// 返回 `{ systemPrompt }` 是"强制整条提示"那条路，宿主语义会丢掉所有结构化 section（含别的插件
+// 贡献的），上游正是不用它。
 
 test("the standing-rule module is declared with its permission and stays auditable", async () => {
   const declared = manifest.contributes.agentExtensions;
@@ -734,27 +746,43 @@ test("the standing-rule module is declared with its permission and stays auditab
   assert.deepEqual([...handlers.keys()], ["before_agent_start"], "one hook, the supported one");
 
   const base = "# Skills\n\n- `pi.thinkrail/choosing-a-workflow` — …";
-  const result = handlers.get("before_agent_start")({ systemPrompt: base });
-  assert.ok(result.systemPrompt.startsWith(base), "appends to the system prompt, never replaces it");
-  assert.match(result.systemPrompt, /whether the project has a spec graph/, "asks for the case this plugin most needs unprompted");
-  assert.match(result.systemPrompt, /onboarding case/, "and names the classification, without forcing the route");
-  assert.match(result.systemPrompt, /otherwise proceed directly without loading or announcing/, "and states the direct-work boundary (#485) that replaced the question carve-out");
+  // 投递方式与上游一致：写自己的命名 section，且**不返回 systemPrompt**——后者会被宿主当成强制整条
+  // 提示，而那条路的语义是丢掉所有结构化 section（别的插件的贡献也一起没了）。
+  const options = { sections: {} };
+  const result = handlers.get("before_agent_start")({ systemPrompt: base, systemPromptOptions: options });
+  assert.equal(result.systemPrompt, undefined, "never forces the whole prompt");
+  assert.equal(
+    options.sections[mod.WORKFLOW_SECTION],
+    mod.WORKFLOW_RULE,
+    "delivers the rule as its own named section, like upstream",
+  );
+
+  const rule = options.sections[mod.WORKFLOW_SECTION];
+  assert.match(rule, /whether the project has a spec graph/, "asks for the case this plugin most needs unprompted");
+  assert.match(rule, /onboarding case/, "and names the classification, without forcing the route");
+  assert.match(rule, /otherwise proceed directly without loading or announcing/, "and states the direct-work boundary (#485) that replaced the question carve-out");
+
+  // section 名的约束来自宿主（`/^[a-z][a-z0-9_-]*$/`，且不可为 `preamble`）；违规会在拼装提示时抛错，
+  // 所以这个名字不能随手改。真机那一侧还有一条对着宿主自己那条正则的检查。
+  assert.match(mod.WORKFLOW_SECTION, /^[a-z][a-z0-9_-]*$/, "the host rejects every other section name");
+  assert.notEqual(mod.WORKFLOW_SECTION, "preamble", "the host reserves this one");
 
   // 规则点名的技能 id 必须真的被声明——重命名技能文件会让规则静默指向不存在的 id。
-  const ids = [...result.systemPrompt.matchAll(/`(pi\.[a-z0-9-]+\/[a-z0-9-]+)`/g)].map((m) => m[1]);
+  const ids = [...rule.matchAll(/`(pi\.[a-z0-9-]+\/[a-z0-9-]+)`/g)].map((m) => m[1]);
   assert.ok(ids.length >= 1, "the rule names a skill");
   const declaredIds = new Set(
     manifest.contributes.skills.map((rel) => `${manifest.id}/${basename(rel, ".md")}`),
   );
   for (const id of ids) assert.ok(declaredIds.has(id), `rule points at an undeclared skill: ${id}`);
 
-  // 宿主用返回值**覆盖**系统提示（result.systemPrompt ?? base），所以这两种情况必须什么都不返回：
-  // 事件里没有 base（宿主换了形状），以及宿主把已追加过的提示又发回来（幂等）。
-  assert.equal(handlers.get("before_agent_start")({}).systemPrompt, undefined, "never clobber base");
-  const already = handlers.get("before_agent_start")({
-    systemPrompt: `${base}\n\n${mod.WORKFLOW_RULE}`,
-  });
-  assert.equal(already.systemPrompt, undefined, "idempotent");
+  // 没有 section 表的宿主（老版本，或事件形状换了）：什么都不贡献、也不抛错——宁可规则缺席，
+  // 也不退回"强制整条提示"那条路。
+  assert.deepEqual(handlers.get("before_agent_start")({}), {}, "no event: contribute nothing");
+  assert.deepEqual(
+    handlers.get("before_agent_start")({ systemPrompt: base }),
+    {},
+    "a host without a section map gets nothing, not a forced prompt",
+  );
 });
 
 test("the panel page and the panel script agree on ids, channels and safety", () => {
@@ -874,6 +902,181 @@ test("deeply nested specs are found (glob does the walking, not this plugin)", a
     const state = await panelState();
     assert.equal(state.specs.count, 1);
     assert.equal(state.specs.nodes[0].id, "deep");
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+// ── 索引层与上游的逐条对齐 ─────────────────────────────────────────────────
+//
+// store.js 是照着上游 store.ts 的语义逐条移植的：下面几条钉住「哪些判断必须与上游一致」——
+// 忽略目录的判据（逐字节，且两条枚举路径一致）、遍历顺序（目录与文件同列、逐层下降）、
+// 以及路径解析遇到一个普通文件时的行为。
+
+/**
+ * 直连索引：拿假宿主的 fs 网关造一个 `SpecIndex`，于是枚举的**顺序**与结果都能原样断言
+ * （面板的 state 会把节点按 id 重新排过，看不出遍历顺序）。
+ */
+function indexOf(ctx) {
+  const { SpecIndex } = pluginRequire(join(PLUGIN_DIR, "lib/spec/index.js"));
+  return new SpecIndex(ctx.projectDir, {
+    glob: async (pattern) => ctx.host.pi.fs.glob(pattern),
+    list: async (rel) => ctx.host.pi.fs.list(rel),
+    stat: async (rel) => ctx.host.pi.fs.stat(rel),
+    readText: async (rel) => ctx.host.pi.fs.readText(rel),
+  });
+}
+
+test("the glob path drops the ignored directories and keeps the rest", async () => {
+  const ctx = setup();
+  try {
+    // 小仓库走「一次 glob + 按目录取元数据」：宿主 glob 不认忽略目录（它只跳 .git / node_modules /
+    // .venv / __pycache__），所以忽略判断必须由本模块按段补上，且与上游遍历一样**逐字节**——
+    // `dist` 丢掉，`Build`（真名不是 `build`）留下。
+    mkdirSync(join(ctx.projectDir, "docs"), { recursive: true });
+    mkdirSync(join(ctx.projectDir, "dist"), { recursive: true });
+    mkdirSync(join(ctx.projectDir, "Build"), { recursive: true });
+    writeFileSync(join(ctx.projectDir, "docs/a.md"), "---\nid: a\ntype: task-spec\ntitle: A\n---\n");
+    writeFileSync(join(ctx.projectDir, "dist/SPEC.md"), "---\nid: dist\ntype: module-design\ntitle: Dist\n---\n");
+    writeFileSync(join(ctx.projectDir, "Build/SPEC.md"), "---\nid: build\ntype: module-design\ntitle: Build\n---\n");
+
+    const index = indexOf(ctx);
+    assert.deepEqual(
+      (await index.scan()).map((spec) => spec.rel),
+      ["Build/SPEC.md", "docs/a.md"],
+    );
+    // 走的是 glob 那条路：一次 glob，而不是逐目录 list 遍历。
+    assert.equal(ctx.host.calls.filter(([api]) => api === "fs.glob").length, 1);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("a directory whose real name is not ignored byte-for-byte survives the list walk", async () => {
+  const ctx = setup();
+  try {
+    // 超过 500 条匹配 → 走并发逐目录 list 那条路。上游的判据是 `IGNORED_DIRS.has(dirent.name)`
+    // 的**逐字节**命中，所以 `Build/` 不是一个被忽略的目录（折叠判断会把它静默丢掉）。
+    for (let i = 0; i < 600; i += 1) {
+      writeFileSync(join(ctx.projectDir, `s${i}.md`), `---\nid: s${i}\ntype: task-spec\ntitle: S${i}\n---\n`);
+    }
+    mkdirSync(join(ctx.projectDir, "Build"), { recursive: true });
+    writeFileSync(join(ctx.projectDir, "Build/SPEC.md"), "---\nid: build\ntype: module-design\ntitle: Build\n---\n");
+    // 同一个夹具里放一个真名命中的：两条枚举路径都不该收它。
+    mkdirSync(join(ctx.projectDir, "dist"), { recursive: true });
+    writeFileSync(join(ctx.projectDir, "dist/SPEC.md"), "---\nid: dist\ntype: module-design\ntitle: Dist\n---\n");
+
+    const index = indexOf(ctx);
+    assert.equal((await index.scan()).length, 601);
+    assert.equal(await index.pathForId("build"), "Build/SPEC.md");
+    assert.equal(await index.pathForId("dist"), undefined);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("the index is ordered the way the upstream walk yields paths", async () => {
+  const ctx = setup();
+  try {
+    // 上游每层按 (NFC key, 原始名) 排、目录与文件同列、逐层下降：同一层里目录 `a` 的名字小于
+    // 文件 `a.md`（`a` 是 `a.md` 的前缀），所以 `a/x.md` 先被产出。按整串比较会把这个顺序反过来。
+    writeFileSync(join(ctx.projectDir, "a.md"), "---\nid: a\ntype: task-spec\ntitle: A\n---\n");
+    mkdirSync(join(ctx.projectDir, "a"), { recursive: true });
+    writeFileSync(join(ctx.projectDir, "a/x.md"), "---\nid: ax\ntype: module-design\ntitle: AX\n---\n");
+
+    const index = indexOf(ctx);
+    assert.deepEqual(
+      (await index.scan()).map((spec) => spec.rel),
+      ["a/x.md", "a.md"],
+    );
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("a duplicated id is won by the spec the walk order reaches first", async () => {
+  const ctx = setup();
+  try {
+    // 工具与图都取「该顺序里第一个」，所以定序是行为、不只是显示顺序。
+    writeFileSync(join(ctx.projectDir, "a.md"), "---\nid: dup\ntype: task-spec\ntitle: Root one\n---\n");
+    mkdirSync(join(ctx.projectDir, "a"), { recursive: true });
+    writeFileSync(join(ctx.projectDir, "a/x.md"), "---\nid: dup\ntype: module-design\ntitle: Nested one\n---\n");
+
+    const index = indexOf(ctx);
+    assert.equal(await index.pathForId("dup"), "a/x.md");
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("a path that passes through a plain file is refused, not resolved", async () => {
+  const ctx = setup();
+  try {
+    writeFileSync(join(ctx.projectDir, "README.md"), "---\nid: readme\ntype: task-spec\ntitle: Readme\n---\n");
+    await main.onLoad();
+
+    const result = await call(ctx.host.tools.get("spec_create"), {
+      path: "README.md/child.md",
+      id: "child",
+      type: "module-design",
+      title: "Child",
+    });
+    // 上游只要上一段存在过就去 readdir 那一层；那里是个普通文件，readdir 失败（ENOTDIR）→ 报错。
+    assert.equal(typeof result, "object", "spec_create must fail rather than write under a file");
+    assert.match(result.error, /^Path passes through a directory the index cannot list/);
+    assert.equal(existsSync(join(ctx.projectDir, "README.md/child.md")), false);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("a root the host cannot list is named as a root problem, not as a bad path", async () => {
+  const ctx = setup();
+  try {
+    await main.onLoad();
+    // 无会话的调用跟随窗口里可见的项目；这里没有可见项目，宿主读不到根。
+    ctx.host.setWorkspace(null);
+    const result = await ctx.host.tools.get("spec_create").execute(
+      { path: "a.md", id: "a", type: "task-spec", title: "A" },
+      {},
+    );
+    // 上游会报 `Project root does not exist: ${root}`，但本移植拿不到根路径，只能把宿主自己的
+    // 错误带出来——关键是它必须与「某个目录读不动」区分开。
+    assert.match(result.error, /^Project root is not readable: No workspace is open$/);
+    assert.doesNotMatch(result.error, /cannot list/);
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("spec_create accepts case-variant directories but rejects exact ignored names", async () => {
+  const ctx = setup();
+  try {
+    await main.onLoad();
+
+    const created = await call(ctx.host.tools.get("spec_create"), {
+      path: "Build/SPEC.md",
+      id: "build-case-variant",
+      type: "module-design",
+      title: "Case-variant directory",
+    });
+    assert.equal(created.content, "Created Build/SPEC.md (id: build-case-variant).");
+    assert.ok(existsSync(join(ctx.projectDir, "Build/SPEC.md")), "Build/ remains writable");
+
+    rmSync(join(ctx.projectDir, "Build"), { recursive: true, force: true });
+    for (const [index, directory] of ["build", ".git", "node_modules", "dist"].entries()) {
+      mkdirSync(join(ctx.projectDir, directory), { recursive: true });
+      const rel = `${directory}/blocked-${index}.md`;
+      const result = await call(ctx.host.tools.get("spec_create"), {
+        path: rel,
+        id: `blocked-${index}`,
+        type: "module-design",
+        title: "Must be rejected",
+      });
+      assert.equal(typeof result, "object", `${directory}/ must be rejected`);
+      assert.match(result.error, /Path is inside an ignored directory/);
+      assert.equal(existsSync(join(ctx.projectDir, rel)), false, `${directory}/ must not be written`);
+    }
   } finally {
     ctx.cleanup();
   }

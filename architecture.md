@@ -32,12 +32,19 @@ commands 都是运行时注册表），这边是一个隔离的插件进程，�
   节名；6 篇超长的 description 被改写到 240 以内——被截断的正好是"不适用于 X，改用 Y"
   那段路由信息，丢了模型就会装错技能。
 - **两条常驻规则：一条进技能描述，一条由 agent 扩展还原。** DSH 用 `systemPrompt.section` 每步注入
-  "先读 spec 再看代码"与"先说清这是哪一类工作"。PI-Desktop 没有 prompt section，但有两处等价物：
+  "先读 spec 再看代码"与"先说清这是哪一类工作"。PI-Desktop 没有 `systemPrompt.section` 那种注册式 API，
+  但有两处等价物：
   ① `# Skills` 块——sidecar 把三套技能目录（内置 / 插件 / 用户）渲染成指令块，放进**每个会话的
   基础系统提示**，位置在用户 `AGENTS.md` 指令链之前（所以用户的话有最后决定权）；这条路径承载了
   "先读 spec 再看代码"（`spec-graph` 的 description）以及"什么时候用哪个技能"。
-  ② `extensions/workflow-rule.mjs`（1.2.0 起，需 `agent.extension`）——在 `before_agent_start`
-  里把"入口每次都跑"追加到系统提示**末尾**，也就是排在技能目录与 `AGENTS.md` 之后。上游的这两条规则
+  ② `extensions/workflow-rule.mjs`（1.2.0 起，需 `agent.extension`）——在 `before_agent_start` 里把
+  "入口每次都跑"**写进宿主自己的命名 prompt section**（`pi-thinkrail-workflow`），这正是上游的机制：
+  上游 SPEC 写明要写 `systemPromptOptions.sections[<name>]` 且**不返回任何东西**——"so pi patches that
+  one section instead of forcing a whole prompt"。宿主（0.15.6）把可改写的 `systemPromptOptions` 交给
+  扩展并在钩子返回后采用它，扩展贡献的 section 渲染成 `<name>…</name>` 并**结尾于提示尾部**，所以它
+  仍排在技能目录与 `AGENTS.md` 之后。1.2.0–1.4.0 走的是另一条路（返回 `{ systemPrompt }` 追加），
+  理由是"宿主不给插件 prompt section"——现在这个前提**不成立**了；而那条路在宿主语义下会**丢掉所有
+  结构化 section**（含别的插件贡献的），所以 1.4.1 改回与上游一致。上游的这两条规则
   各由一个扩展承载（workflow 的 `WORKFLOW_RULE`、spec-graph 的 `SPEC_RULE`）；本插件只声明一条，
   spec-graph 那半靠 `spec-graph` 的 description 与正文。两条路径的代价都记在 invariants 里：描述必须
   自带触发条件且 ≤240 字符（宿主会截断，截掉的正是路由信息）；扩展模块必须保持可审阅。技能目录的
@@ -49,12 +56,14 @@ commands 都是运行时注册表），这边是一个隔离的插件进程，�
   `{token, view}`，视图每 2 秒问一次 `hint` channel 并对比 token；用 token 而不是「读一次就
   消费」，是因为视图可能被挂起、也可能不止一个读者，消费式提示漏一次就永远丢了。轮询走的
   是纯内存的一跳，绝不轮询 `state`（那会走 fs 与 git）——这一条由测试盯着。
-- **枚举用 glob，并按需分片；不走逐目录 list。** 两种枚举方式在宿主上的代价结构完全不同：
-  `glob` 由宿主在自己的进程里走完树，一次 IPC，但单次最多 500 条匹配且不报截断；`list` 给
-  足元数据（于是不需要再 stat），代价是每个目录一次 IPC。实测同一个仓库（11672 个目录、
-  573 个 `.md`）：逐目录 list 要 11672 次 IPC 且会被目录数刹车截断，分片 glob 只要
-  21 次 glob + 1 次 list + 573 次 stat 且结果完整。所以取分片 glob，并把「拆不动」显式
-  标成 `specs.truncated` 而不是假装完整。
+- **枚举只跑一次 glob；顶到 500 条上限就改用并发 `list` 遍历，而不是分片重扫。** 宿主的 `glob`
+  在主进程里递归整棵树、一次 IPC，但单次最多 500 条匹配且**不报截断**；`list` 一次给一个目录的
+  全部 size/mtimeMs，代价是每个目录一次 IPC。给 glob 加目录前缀**不会**让它少走树（宿主始终从根
+  递归，pattern 只用来过滤），所以「按子目录分片重扫」在这里等于把整棵树走十几遍——实测 11678
+  个目录的仓库每遍 glob 约 800 ms，而并发 `list` 跑完一遍约等于一次树遍历的 CPU 时间。上限的
+  判据用**宿主原样给的回数**：过滤掉本插件忽略的目录后条数可能落到 500 以下，那也仍是「宿主
+  截断了」。只有并发遍历触到深度 / 目录数刹车时才把结果标成 `specs.truncated`——「拆不动」不是
+  常态。
 - **枚举永不阻塞 UI，且一遍树只走一次。** 宿主的 `pi.fs.glob` 从工作区根无条件递归（pattern
   只过滤结果，满 500 条提前返回），所以「按子目录分片重扫」等于把整棵树走十几遍——实测
   11678 目录的仓库每遍 ~800 ms。因此：小仓库用一次 glob + 按目录取元数据；顶到 500 条上限时
@@ -66,6 +75,26 @@ commands 都是运行时注册表），这边是一个隔离的插件进程，�
   每个目录 list 一次就够（573 个 .md 散在 235 个目录里 = 235 次调用，而不是 573 次）；目录条目
   顶到宿主的 1000 条上限时，只对漏掉的那几个文件退回 stat。这条把「每次读面板要发的宿主调用
   数」从 ~600 压到 ~300。
+
+- **两条枚举路径必须看见同一棵树：忽略目录逐字节判，而且上限判据用宿主原样给的回数。** 宿主的
+  `glob` 不认忽略目录（只跳 `.git/node_modules/.venv/__pycache__`），所以一次 glob 拿回的候选要
+  按**段**逐字节过 `IGNORED_DIRS`；并发 `list` 遍历里的目录名同样逐字节判（上游遍历就是
+  `IGNORED_DIRS.has(dirent.name)`——真名叫 `Build/` 的目录不是 `build/`，用折叠判断会把它静默
+  丢掉）。过滤发生在收下回数之后：判「有没有顶到 500」用的是宿主原样给的回数，否则一个 `.md` 全
+  在 `dist/` 下的仓库会把「宿主截断了」当成「就这么多」。
+- **定序是逐段的，路径解析要求上一段存在过。** 上游遍历是「每层按 (NFC key, 原始名) 排序、目录与
+  文件同列、逐层下降」，拍平后等价于**逐段**比较（每段先比 NFC 折叠值，再比原始名）——同层里 `a`
+  小于 `a.md`，所以 `a/x.md` 先于 `a.md`。定序不只是显示顺序：重复 id 的胜者是该顺序里第一个，面板
+  与工具的图都建在它之上。`resolveSpecPath` 也照上游：**只要上一段存在过**就 `list` 那一层（不要求
+  它是目录），所以 `README.md/child.md` 会因为 `list` 一个普通文件失败（ENOTDIR）被拒，而不是被
+  解析成一个真能写过去的 rel。
+- **两处上游判据在本移植里没有对应物，只保留它们承载的区分。** ①上游先 `existsSync(root)`，不存在
+  时报 `Project root does not exist: ${root}`；本插件**拿不到根路径**（宿主按会话定根，见不变量），
+  所以第一段就列不出来时改报 `Project root is not readable: ${宿主自己的错误文本}`——留下的区分是
+  「根不可读 ≠ 空仓库 ≠ 某个目录读不动」，代价是文案里只能是宿主的话。②上游收尾的
+  `isPathInsideRoot(root, walked)` **不实现**：这里所有路径都是工作区根相对的，越界由宿主的 realpath
+  拦下，判据从「本模块拒绝」变成「宿主拒绝」（与符号链接同一条机制）——这是载体差异，不是丢了
+  能力。
 - **详情页不依赖索引。** 点开一个 spec 只需要「校验这个路径 + 读这个文件」，而「谁引用了它」由面板
   用 state 里带下来的正向链接自己反推（`links` 随节点一起送）。曾经这里是 `index.graph()`，于是
   点击的代价取决于「上一次扫树是多久之前」——人看得越久，点得越慢，这是最难受的一种卡。现在
@@ -114,15 +143,20 @@ commands 都是运行时注册表），这边是一个隔离的插件进程，�
 - 面板是窗口级视图：面板调用没有会话 id，继续跟随宿主当前激活的项目，并保留「没有激活项目」的说明。
 - 技能的 name 必须等于文件名，description ≤240 字符，单文件 ≤128 KiB。
 - 唯一不在沙箱内的代码是 `extensions/workflow-rule.mjs`（声明为 `contributes.agentExtensions`，
-  需要 `agent.extension`）：它在 **agent 进程内**挂 `before_agent_start`，把那条入口规则追加到系统
-  提示末尾（拼装顺序是 运行时规则 → 技能目录 → AGENTS.md → 项目记忆 → 本规则，所以它是最强的指令
-  位置）。`0a41d5d`（#485）之后这条规则自身收窄：只在 onboarding、PR 生命周期、以及仍有产品与设计
-  选择未决的改动上要求读路由器，其余工作直接做、不做路由声明——它与路由器 description 是一对，改
-  一边必须改另一边。上游的两条常驻规则各由一个扩展承载（workflow 的 `WORKFLOW_RULE`、spec-graph 的
-  `SPEC_RULE`），本插件只声明这一条，spec-graph 那半由 `spec-graph` 的 description 与正文承载。
-  它必须保持可审阅：无 import、无 require、不碰文件系统与网络、只追加不替换；测试钉这几条。它承载的
-  是原版靠 `before_agent_start` 常驻规则提供的「入口总会跑」，因此改它的措辞属于系统级改动（先改
-  `skills/writing-workflow-skills.md` 的元规则，再改它）。
+  需要 `agent.extension`）：它在 **agent 进程内**挂 `before_agent_start`，把那条入口规则**写进宿主自己的
+  命名 section**（`pi-thinkrail-workflow`；宿主的约束是 `/^[a-z][a-z0-9_-]*$/` 且不可为 `preamble`，
+  违规会在拼装提示时抛错），这正是上游的投递机制——写 `systemPromptOptions.sections[<name>]` 并返回
+  空对象，**绝不**返回 `systemPrompt`（那是“强制整条提示”路径，会丢掉所有结构化 section，
+  包括其他插件贡献的）。兼容最低版本为 PI-Desktop `0.15.6`：具名 section 是常驻规则的必要投递面，
+  manifest 拒绝更旧宿主；运行时若仍缺少 section map，扩展安全地不贡献规则，绝不回退到整条提示。
+  渲染出来的 `<pi-thinkrail-workflow>…</pi-thinkrail-workflow>` 排在宿主内建 section 之后并**结尾于提示尾部**，所以仍是最强指令位置；
+  只在 onboarding、PR 生命周期、以及仍有产品与设计选择未决的改动上要求读路由器，其余工作直接做、
+  不做路由声明——它与路由器 description 是一对，改一边必须改另一边。上游的两条常驻规则各由一个扩展
+  承载（workflow 的 `WORKFLOW_RULE`、spec-graph 的 `SPEC_RULE`），本插件只声明这一条，spec-graph 那
+  半由 `spec-graph` 的 description 与正文承载。它必须保持可审阅：无 import、无 require、不碰文件系统
+  与网络、只写自己那一节、绝不替换整条提示；测试钉这几条（含对着宿主自己的 section 名正则的那条真机
+  检查）。它承载的是原版靠 `before_agent_start` 常驻规则提供的「入口总会跑」，因此改它的措辞属于
+  系统级改动（先改 `skills/writing-workflow-skills.md` 的元规则 13，再改它）。
 
 ## 范围之外
 

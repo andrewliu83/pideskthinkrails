@@ -56,7 +56,8 @@ state for foreign workspaces.
       heavy reference material become **sections of this same file**, named in the exact step that
       hands to them (progressive disclosure), as `shipping-a-pr` does with its six phases.
 - [ ] Say each thing once (rule 7): cross-reference other skills by name; never inline another skill's
-      steps.
+      steps, never force-load its file. On this host a skill is one file read on demand by id, so
+      "loading" another skill means calling the Skill tool for it — hand off, don't pull it in.
 - [ ] Put gates where discipline matters, matching the form to the failure (rule 11): prohibitions +
       red flags for discipline violations, positive recipes for output shape.
 - [ ] Durable output goes to the spec graph (rule 8). Ephemeral working files — resume state, scratch
@@ -116,9 +117,11 @@ The rules below were written for a host with a standing prompt rule, sibling-doc
 in-repo e2e harness. PI-Desktop gives a plugin none of those, so four of them read differently here —
 the intent is unchanged:
 
-- **Discovery (rule 4).** This host gives a plugin no prompt *section*, but it does give it an agent
-  extension (`agent.extension` + `contributes.agentExtensions`) — and this plugin uses exactly that for
-  the standing rule: `extensions/workflow-rule.mjs` appends it to the system prompt every turn. That
+- **Discovery (rule 4).** This host gives a plugin an agent extension (`agent.extension` +
+  `contributes.agentExtensions`) whose `before_agent_start` hook may write into the host's **own**
+  prompt sections — and this plugin uses exactly that for the standing rule:
+  `extensions/workflow-rule.mjs` sets `systemPromptOptions.sections["pi-thinkrail-workflow"]` every
+  turn, the same mechanism upstream uses (it never forces a whole prompt). That
   rule scopes its own pointer: project onboarding or any PR lifecycle work goes to the **root router**;
   for other new changes the pointer appears only when product scope, user-visible behavior, or
   architecture remains to decide; work already routed continues without being routed again; and
@@ -208,8 +211,8 @@ pipeline state is task-spec content; stage transitions are ordinary handoffs.
 4. At the start of a new piece of work, one always-on entry rule names the workflow-eligible classes —
    project onboarding and PR lifecycle work take precedence regardless of whether they edit code; other
    changes enter only when they require product or design decisions. The rule points only those classes
-   at the root router (this plugin's `extensions/workflow-rule.mjs` appends it to the system prompt
-   every turn — see "What this host changes" above). Work already routed resumes its active workflow;
+   at the root router (this plugin's `extensions/workflow-rule.mjs` writes it into its own prompt
+   section every turn — see "What this host changes" above). Work already routed resumes its active workflow;
    all other work proceeds directly without loading or announcing one. Skills are otherwise reached by
    routing/handoff, or — when the trigger is unmistakable — by a narrow self-trigger `description`:
    alongside a route (as `setting-up-a-project` does) or, for skills outside the router's work
@@ -301,7 +304,7 @@ The family's known debt, stated honestly and tracked here until each item earns 
 - **Rule 14 (verify-by-use) is suspended** — not a done-gate, and in this plugin nothing has been
   observed flowing by use: the standing rule is read for the classes it names — the router included —
   but whether the routing then matches the work has not been watched in a real session, and the
-  plugin's test suite pins contract-level facts (the module appends, it is declared with its
+  plugin's test suite pins contract-level facts (the module writes exactly one section, it is declared with its
   permission, no skill points at a sibling file) rather than observed routing. Every process row above
   carries that debt — and the standing rule itself is only as good as its wording, which is exactly why
   changing it is a system-shaping change (rule 13).

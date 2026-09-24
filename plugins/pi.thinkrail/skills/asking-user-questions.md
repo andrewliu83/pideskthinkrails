@@ -31,6 +31,9 @@ degrade when answers don't come. Process skills name this concept at the steps t
 - An option is a **plain label**, one string each: the choice and its consequence inside the same
   string (e.g. `A full deletion (Recommended): drop the tools, the panel page and the tests, keep the
   7 spec tools`). This carrier has no separate label/description pair and renders no `Why:` line.
+- The card accepts only `question`, `options` (an array of strings, deduplicated) and `multiSelect`.
+  Anything else is dropped before it reaches the UI — including upstream's `header` short label and
+  its per-option `preview` markdown, which this carrier has no field for.
 - Recommended option first, label suffixed "(Recommended)", with the reason that would go in a
   recommended-reason field folded into that option's own text.
 - Every option: a concise label (1–5 words, ≤ 60 chars) plus the trade-off or consequence of choosing

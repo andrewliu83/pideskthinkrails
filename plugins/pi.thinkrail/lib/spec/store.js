@@ -7,14 +7,14 @@
 //
 // 与 DSH 版（因而也与 thinkrail）的三处有意偏差，全部来自宿主换了 I/O 网关：
 //
-//   * 枚举走宿主的 `pi.fs.glob`，并按需**分片**：glob 一次就能让宿主在它自己的进程里走完整棵树
-//     （1 次 IPC），但单次最多返回 500 条匹配且不告诉你被截断了。所以拿到 500 条时不能当作
-//     「就这么多」，而是按下一层子目录把 pattern 拆成多个更小的 glob，直到每片都低于上限。
-//     实测：11k 目录 / 573 个 .md 的仓库，分片后约 50 次 glob；而「逐目录 list 一遍」要 11k 次
-//     IPC——同一棵树，贵 200 倍。分片有深度上限与总调用上限，两者都会把结果标成 truncated
-//     而不是无声地少给东西。
-//   * 结果按 NFC 折叠后的相对路径排序。原版靠「逐层 readdir + 逐层排序」定序，而宿主的遍历
-//     顺序由 readdir 决定，所以顺序必须显式排出来才稳定。
+//   * 枚举先让宿主的 `pi.fs.glob` 试一次（一次 IPC，宿主在自己的进程里走完整棵树），但单次最多
+//     返回 500 条匹配且不告诉你被截断了，所以拿到上限不能当作「就这么多」：顶到 500 条时改用
+//     **并发逐目录 `list`** 遍历。给 glob 加目录前缀不会让它少走树（宿主始终从根递归，pattern 只
+//     用来过滤），所以「按子目录分片重扫」等于把整棵树走十几遍。并发遍历有深度上限与目录数上限，
+//     触到才把结果标成 truncated，而不是无声地少给东西。
+//   * 结果按**遍历顺序**显式排出：逐段比较（每段先比 NFC 折叠值，再比原始名），目录与文件同列、
+//     逐层下降——与上游的「逐层 readdir + 逐层排序」等价，而宿主的遍历顺序由 readdir 决定，
+//     所以顺序必须显式排出来才稳定。
 //   * 符号链接不再由本模块识别（pi.fs 不报告它）。越界由宿主的 realpath 检查拦下，判据从
 //     「本模块拒绝」变成「宿主拒绝」；递归也必须有深度刹车，否则一个指回上层的链接就是无限递归。
 
@@ -44,8 +44,25 @@ function fold(name) {
 	return name.normalize("NFC").toLowerCase();
 }
 
-function isIgnoredName(name) {
-	return IGNORED_DIRS.has(fold(name));
+/**
+ * 候选路径的**目录段**里有没有逐字节命中的忽略目录。
+ *
+ * 上游遍历在每一层用 `IGNORED_DIRS.has(dirent.name)` 逐字节判断，所以这里也必须逐字节——
+ * 折叠判断会把真名叫 `Build/` 的目录静默丢掉，两条枚举路径的结果就会不一致。
+ * 最后一段是文件名，只有目录段参与判断。
+ */
+function passesThroughIgnoredDir(rel) {
+	const segments = rel.split("/");
+	for (let i = 0; i < segments.length - 1; i += 1) {
+		if (IGNORED_DIRS.has(segments[i])) return true;
+	}
+	return false;
+}
+
+/** 宿主抛的东西不一定带 message；没有就明说，不要拼出一个空的冒号尾巴。 */
+function hostMessage(error) {
+	const message = error instanceof Error ? error.message : String(error);
+	return message.trim() === "" ? "the host gave no reason" : message;
 }
 
 /**
@@ -71,7 +88,8 @@ function resolvePathSegment(entries, segment, exists) {
 		}
 		name = only;
 	}
-	if (isIgnoredName(name)) {
+	// 与枚举保持逐字节一致：`Build` 不是确切忽略名 `build`，所以仍可访问。
+	if (IGNORED_DIRS.has(name)) {
 		return { error: `Path is inside an ignored directory ("${name}") and would not be indexed` };
 	}
 	return { name };
@@ -82,6 +100,13 @@ function resolvePathSegment(entries, segment, exists) {
  *
  * 拒绝：空路径、绝对路径、非 `.md`、含 `..`、穿过被忽略目录、穿过一个列不出来的目录、
  * Windows 盘符/流语法。返回 `{ rel }` 或 `{ error }`。
+ *
+ * 与上游的两处载体差异：
+ *   * 上游先 `existsSync(root)`，不存在时报 `Project root does not exist: ${root}`；本移植
+ *     **拿不到根路径**（宿主按会话定根），所以第一段就列不出来时改报
+ *     `Project root is not readable: ${宿主错误}`，并把宿主自己的错误文本带出来。
+ *   * 上游收尾检查 `isPathInsideRoot(root, walked)`；本移植里所有路径都是工作区根相对的，
+ *     越界由宿主的 realpath 拦下，这条检查没有对应物——不是丢了能力。
  */
 async function resolveSpecPath(fio, path) {
 	if (path.trim() === "") return { error: "Path must not be empty." };
@@ -102,19 +127,26 @@ async function resolveSpecPath(fio, path) {
 	}
 
 	const canonical = [];
-	let parentExists = true;
+	// 与上游一致：**只要上一段存在过**（不要求它是目录）就 list 那一层。于是「上一段是个普通
+	// 文件」不会被放行——list 那个文件会失败（ENOTDIR），这正是上游的判据。
+	let walkedExists = true;
 	for (const segment of segments) {
 		let entries = [];
-		if (parentExists) {
+		if (walkedExists) {
 			try {
 				entries = await fio.list(canonical.join("/"));
-			} catch {
+			} catch (error) {
+				// 第一段就列不出来 = 这个会话没有可读的根（宿主没有根、或项目目录没了），
+				// 那不是「某个目录读不动」。宿主按会话定根，插件手里没有根路径。
+				if (canonical.length === 0) {
+					return { error: `Project root is not readable: ${hostMessage(error)}` };
+				}
 				return { error: `Path passes through a directory the index cannot list: ${path}` };
 			}
 		}
 		const match = entries.find((entry) => entry.name === segment) ??
 			entries.find((entry) => fold(entry.name) === fold(segment));
-		const exists = parentExists && match !== undefined;
+		const exists = walkedExists && match !== undefined;
 		const resolution = resolvePathSegment(
 			entries.map((entry) => entry.name),
 			segment,
@@ -122,7 +154,7 @@ async function resolveSpecPath(fio, path) {
 		);
 		if ("error" in resolution) return { error: `${resolution.error}: ${path}` };
 		canonical.push(resolution.name);
-		parentExists = exists && match?.isDirectory === true;
+		walkedExists = exists;
 	}
 
 	const rel = canonical.join("/");
@@ -132,11 +164,30 @@ async function resolveSpecPath(fio, path) {
 	return { rel };
 }
 
+/**
+ * 比较两个相对路径在**遍历顺序**里的先后。
+ *
+ * 上游的遍历是「逐层按 (NFC key, 原始名) 排序、目录与文件同列、逐层下降」的 DFS。先把结果
+ * 拍平、再按整串 NFC 比较做不到这一点——那会让 `a.md` 排在 `a/x.md` 前面，而上游的目录 `a`
+ * 排在文件 `a.md` 之前（同一层里 `a` < `a.md`）。所以这里**逐段**比较，与上游的 DFS 等价。
+ */
 function compareRel(a, b) {
+	const left = a.split("/");
+	const right = b.split("/");
+	for (let i = 0; i < left.length && i < right.length; i += 1) {
+		const order = compareWalkSegment(left[i], right[i]);
+		if (order !== 0) return order;
+	}
+	return left.length - right.length;
+}
+
+/** 上游 `compareWalkEntries` 的一段：先比 NFC 折叠值，再比原始串。 */
+function compareWalkSegment(a, b) {
 	const left = a.normalize("NFC");
 	const right = b.normalize("NFC");
-	if (left === right) return 0;
-	return left < right ? -1 : 1;
+	if (left !== right) return left < right ? -1 : 1;
+	if (a !== b) return a < b ? -1 : 1;
+	return 0;
 }
 
 /**
@@ -197,14 +248,23 @@ class SpecIndex {
 	async walk() {
 		this.truncated = false;
 		const matches = [];
+		// 宿主自己给的回数：上限判据必须用它，不能用过滤后的条数——一个只有 `dist/*.md` 的仓库
+		// 过滤完会落到 500 以下，那仍是「宿主截断了」，不能当作「就这么多」。
+		let globbed = 0;
 		try {
+			// 宿主 glob 不看忽略目录，所以这里逐段过滤：上游遍历在每一层用逐字节的
+			// `IGNORED_DIRS.has(dirent.name)`，于是小仓库（glob 路）与大仓库（并发 list 路）
+			// 看到的是同一棵树。
 			for (const rel of await this.fio.glob(`**/*${SPEC_FILE_EXTENSION}`)) {
-				if (rel.endsWith(SPEC_FILE_EXTENSION)) matches.push(rel);
+				globbed += 1;
+				if (!rel.endsWith(SPEC_FILE_EXTENSION)) continue;
+				if (passesThroughIgnoredDir(rel)) continue;
+				matches.push(rel);
 			}
 		} catch {
 			/* 拿不到就让下面的 list 兜底 */
 		}
-		if (matches.length > 0 && matches.length < GLOB_MATCH_CAP) {
+		if (globbed > 0 && globbed < GLOB_MATCH_CAP) {
 			return this.metadataFor(matches);
 		}
 		// 没匹配（空仓库）或顶到上限：用并发遍历拿一份完整的。
@@ -290,7 +350,8 @@ class SpecIndex {
 				for (const entry of entries) {
 					const child = entry.path ?? (next.rel ? `${next.rel}/${entry.name}` : entry.name);
 					if (entry.isDirectory) {
-						if (next.depth + 1 <= MAX_WALK_DEPTH && !isIgnoredName(entry.name)) {
+						// 逐字节，与上游遍历一致：折叠过的判断会把真名叫 `Build/` 的目录静默丢掉。
+						if (next.depth + 1 <= MAX_WALK_DEPTH && !IGNORED_DIRS.has(entry.name)) {
 							queue.push({ rel: child, depth: next.depth + 1 });
 						}
 						continue;
@@ -404,7 +465,6 @@ module.exports = {
 	SpecIndex,
 	compareRel,
 	hasWindowsNamespaceSyntax,
-	isIgnoredName,
 	resolvePathSegment,
 	resolveSpecPath,
 };

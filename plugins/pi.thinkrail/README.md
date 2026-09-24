@@ -23,10 +23,11 @@ and asks the view to switch to that page.
   `setting-up-a-project`, `starting-a-new-project`, `importing-a-codebase`, `brainstorming`,
   `writing-specs`, `asking-user-questions`, `shipping-a-pr`) and `writing-workflow-skills`, the
   authoring checklist and meta-rules for the family itself.
-- **One standing rule (an agent-process extension)** — `extensions/workflow-rule.mjs` appends a short
-  unconditional instruction to the system prompt every turn, pointing the agent at
-  `choosing-a-workflow` (and naming the "project has no spec graph yet" case). It is the only code
-  here that runs outside the fs gateway — see [The standing rule](#the-standing-rule).
+- **One standing rule (an agent-process extension)** — `extensions/workflow-rule.mjs` writes a short
+  unconditional instruction into its own prompt section every turn (`pi-thinkrail-workflow`, the same
+  mechanism upstream ThinkRail uses), pointing the agent at `choosing-a-workflow` (and naming the
+  "project has no spec graph yet" case). It is the only code here that runs outside the fs gateway —
+  see [The standing rule](#the-standing-rule).
 - **A docked view** -- the list sits on top and the detail (spec body) below it. Specs: graph tree,
   filter, full-text search, spec reader with its links and back-links. It is this plugin's only page.
 - **Two commands** -- `ThinkRail: Open`, `ThinkRail: Open Specs`.
@@ -38,7 +39,7 @@ and asks the view to switch to that page.
 | `ui.view` | the ThinkRail tab in the right work panel |
 | `agent.tool.register` | the 7 tools |
 | `agent.prompt.inject` | the 10 skills |
-| `agent.extension` | one module, `extensions/workflow-rule.mjs` — the standing rule. It runs inside the agent process with the agent's tool permissions, so it is **not** covered by the fs gateway below. 14 lines of code (72 with its rationale comment), no imports, no fs, no network. |
+| `agent.extension` | one module, `extensions/workflow-rule.mjs` — the standing rule. It runs inside the agent process with the agent's tool permissions, so it is **not** covered by the fs gateway below. 16 lines of code (85 with its rationale comment), no imports, no fs, no network. |
 | `fs.read` | index specs anywhere in the project (`scope: ["**/*"]`) |
 | `fs.write` | write specs and the `.thinkrail/` scratch dir (`scope: ["**/*.md", ".thinkrail/**"]`) |
 | `fs.delete` | `spec_delete`, to the system trash, only files this plugin wrote (`own: true`) |
@@ -94,7 +95,7 @@ So the **descriptions are always-on instructions** (which is why they were rewri
 trigger conditions), and the **body is fetched on demand** when the model calls `Skill`.
 
 On top of that catalog this plugin restores the DeepSeek Harness version's standing rule, through the
-host's extension point rather than a prompt section — see [The standing rule](#the-standing-rule)
+host's named prompt-section extension point — see [The standing rule](#the-standing-rule)
 below. So the comparison is: the **root router** is pushed unconditionally (as upstream's always-on
 rule did), and every **leaf skill** still needs either a route to it or a description that matches —
 which is where upstream's own rule also landed (its rule named only the router).
@@ -147,20 +148,31 @@ So this plugin also ships **one agent-process extension**, `extensions/workflow-
 
 ```js
 export default function workflowRule(pi) {
-  pi.on("before_agent_start", (event) => ({
-    systemPrompt: `${event.systemPrompt}\n\n${WORKFLOW_RULE}`,
-  }));
+  pi.on("before_agent_start", (event) => {
+    const sections = event?.systemPromptOptions?.sections;
+    if (!sections || typeof sections !== "object") return {};
+    sections[WORKFLOW_SECTION] = WORKFLOW_RULE;
+    return {};
+  });
 }
 ```
 
-`before_agent_start` is a trusted, result-returning hook in the host's sidecar (`extensions may
-replace the system prompt for this turn`), and it is exactly how upstream ThinkRail installs its own
-always-on rule. The system prompt is composed as
-`runtime rules → skills catalog → optional tools → AGENTS.md → project memory`, and the hook's return
-**replaces** that string — so this rule lands *after* your `AGENTS.md`, which makes it the strongest
-instruction position the app offers. It is appended, never substituted: the base prompt is preserved.
+`before_agent_start` is a trusted, result-returning hook in the host's sidecar, and writing into a
+**named prompt section** is exactly how upstream ThinkRail installs its two always-on rules — returning
+nothing ("so pi patches that one section instead of forcing a whole prompt"). This plugin follows that
+mechanism rather than the alternative: returning `{ systemPrompt }` makes the host **force** the whole
+system message, and the host's force semantics drop every structured section — ours and any other
+plugin's. Writing into `sections` works because the runner hands extensions a mutable copy of the
+prompt options and adopts it afterwards. Section names must match the host's own pattern
+(`/^[a-z][a-z0-9_-]*$/`, never `preamble`; a bad name throws while the prompt is composed, so
+`tests/manifest-host-check.test.mjs` checks ours against the host's live regex and against the runner's
+adopt-the-mutation path). The composed prompt renders each section as
+`<pi-thinkrail-workflow>…</pi-thinkrail-workflow>` and **ends** with it, still the strongest instruction position the app offers, after your `AGENTS.md`.
+PI-Desktop 0.15.6 is the supported minimum: it is the first supported version with the section map this
+mechanism needs. This extension never falls back to returning `systemPrompt`; without a section map it
+contributes nothing at all, so the rule goes absent rather than forcing the whole prompt.
 
-What it says (four lines of rule; the file is 72 lines, most of it the comment explaining why):
+What it says (four lines of rule; the file is 85 lines, only 16 of them code — the rest is the comment explaining why):
 
 - at the start of a new piece of work, read `choosing-a-workflow` for project onboarding or any PR
   lifecycle work;
@@ -185,7 +197,7 @@ retired and the first three lines here are upstream verbatim.
 agent process with the agent's own tool permissions. It is not covered by the fs gateway, so the
 plugin's permission story is no longer "only markdown, only through the gateway". That is why the
 module imports nothing, touches no filesystem and no network, and is kept small enough to read before
-you approve it (14 lines of code) — and why the install permission review shows `agent.extension` with
+you approve it (16 lines of code) — and why the install permission review shows `agent.extension` with
 the host's own warning ("Enable only code you trust"). If you would rather not grant it, the same
 effect is available without any new permission by putting the rule in your `AGENTS.md` (one layer
 earlier, and per-project) — see above.
