@@ -1,6 +1,6 @@
 ---
 name: brainstorming
-description: "Use before implementation when a request requires choosing product scope, user-visible behavior, or architecture. Not for fully specified fixes, mechanical refactors, documentation, or configuration-only changes."
+description: "Use before any work that creates or changes project content: features, added functionality, behavior, docs, config, or design — however small. Record and get explicit approval of a task-spec design before implementation."
 ---
 
 > 移植自 JetBrains/ThinkRail 的 `packages/pi-thinkrail-workflow/skills/brainstorming`（MIT）。
@@ -9,50 +9,59 @@ description: "Use before implementation when a request requires choosing product
 
 ## Brainstorm before you build
 
-- Run this workflow only when implementation depends on an unresolved product or design choice.
-- The aim is a validated design, recorded as a spec-graph `task-spec`, not a speculative
-  implementation.
-- Do not implement until the design is accepted. Acceptance criteria or an explicit design already
-  supplied by the user count as approval; do not ask them to approve the same decision again.
+- Before starting any work that changes the project — a new feature, added functionality, a behavioral
+  change, a documentation or configuration edit, or a nontrivial design decision — stop and run this
+  workflow before writing implementation code.
+- The aim is to turn the request into a validated design, recorded as a spec-graph `task-spec`, that the
+  user has explicitly approved — not a guess you implement and hope lands.
+- Never implement during brainstorming. If you catch yourself opening a source file to make a change
+  before the design is approved, stop.
+
+## Anti-pattern: "this is too small to need this"
+
+Every project-changing request goes through this, however small it looks. A one-line config change and a
+new subsystem both benefit from checking what the user actually wants and why. Scale the *depth* to the
+task; never skip the workflow entirely.
 
 ## The workflow
 
-1. **Orient.** Use the spec-graph skill to find relevant recorded boundaries, contracts, invariants,
-   and decisions; read code second to confirm implementation details. Do not read unrelated specs.
-2. **Scope check.** If the request bundles independent product decisions or subsystems, separate them
-   rather than blending unrelated decisions into one task-spec.
-3. **Open a task-spec.** Once the decision to make is understood, `spec_create` a `task-spec` at
+1. **Orient.** Use the spec-graph skill's tools first — `spec_grep` / `spec_get` / `spec_graph` — to
+   find what the project already says about the area; read code second to confirm details.
+2. **Scope check.** If the request bundles independent features or subsystems, separate them and
+   brainstorm them one at a time rather than blending unrelated decisions into one task-spec.
+3. **Open a task-spec.** As soon as you understand roughly what is being asked, create a `task-spec` at
    **`.thinkrail/context/TASK-<slug>.md`** (id, title, status: draft, parent: the nearest relevant
    module). This gitignored file is the one temporary design artifact; update it as decisions land.
-   A `task-spec` only needs frontmatter `id` and `type` to be a valid spec, so this works even in a
-   project with no existing spec graph.
-4. **Clarify only real decisions.** Ask via `ask_user_question` only when the answer changes observable
-   behavior or scope and cannot be inferred safely. Compose a round per the **asking-user-questions**
-   concept skill. Skipped questions or a host with no UI are not blockers: record the best assumption
-   as unconfirmed and continue.
-5. **Draft the design.** Record the request, recommended design, trade-offs that matter, and explicit
-   deferrals. Compare alternatives only when more than one viable approach remains; do not invent
-   options after the constraints already select one.
-6. **Self-review.** Remove placeholders, contradictions, accidental scope expansion, and ambiguous
-   requirements before presenting the design.
-7. **Review once.** Present one cohesive design scaled to the decision. Ask for one approval only when
-   the user has not already approved the same design through their request or acceptance criteria.
-   Revise the task-spec if they adjust it.
-8. **Promote.** Read the **writing-specs** concept skill, then move any settled boundary, contract, or
-   decision into the relevant durable `SPEC.md`; use `spec_create` for a new module, `spec_update` for
-   frontmatter, and `edit` for prose. Run `spec_validate` after structural changes.
-9. **Build.** Implement directly against the accepted design. Before handoff, self-review the task
-   diff: no silent lint/type suppressions, duplicated nontrivial derivations, rationale left as code
-   comments, or remnants of a replaced pattern. Keep durable specs honest and retire the task-spec
-   once the work itself is done.
+   A `task-spec` only needs frontmatter `id` and `type` to be valid, so this works even when the project
+   has no existing spec graph.
+4. **Clarify.** Ask what is needed via `ask_user_question`, following the **asking-user-questions**
+   concept skill. Resolve a full round, update the task-spec, and ask another round only if the answers
+   raise a genuinely new decision. Skipped questions or a host with no UI are not blockers: record
+   best-guess assumptions as unconfirmed and continue.
+5. **Propose approaches.** Once the request is understood, put viable approaches, trade-offs, and a
+   recommendation in the task-spec. When they are easiest to compare side by side, ask one
+   `ask_user_question` round with each approach as an option.
+6. **Present the design.** Write it into the task-spec in sections scaled to its complexity. Confirm
+   decisions with the user as the design develops rather than presenting implementation as a fait
+   accompli.
+7. **Self-review.** Before asking for final approval, reread the task-spec for placeholders, contradictions,
+   accidental scope expansion, unrelated decisions, and ambiguous requirements; fix what you find.
+8. **Final review and approval.** Present the task-spec and proposed design to the user and wait for
+   explicit approval before changing durable specs or source files. A research request or feature prompt
+   alone is not approval of an implementation design.
+9. **Promote.** After approval, move any settled boundary, contract, or decision into the relevant durable
+   `SPEC.md` — `spec_create` for a new module, `spec_update` for its frontmatter, and the normal edit tools
+   for prose. Run `spec_validate` after structural changes.
+10. **Build.** Implement directly against the accepted design. Keep the task-spec and durable specs honest
+    as the code lands, retire the task-spec when the work itself is done, and self-review the implementation
+    diff for correctness, duplicated derivations, stale patterns, and rationale that belongs in a spec.
 
 ## What a good task-spec looks like
 
-- Scoped to one decision-bearing piece of work.
-- States the request, chosen design and why, real alternatives considered, assumptions, and explicit
-  deferrals.
-- Promotes settled decisions instead of copying them: durable rationale lives once in the owning
-  spec.
+- Scoped to one piece of work — if it accumulates unrelated decisions, split them.
+- States the request, the decisions and why, alternatives considered, and anything the user deferred or
+  left unanswered.
+- Promotes durable decisions into the owning spec instead of keeping two copies that can drift.
 
 ## Ending
 

@@ -36,22 +36,8 @@
 // 请求，剥掉注释后只有十几行代码。宿主若不认识 `contributes.agentExtensions`（或那个宿主版本没有
 // section 表），这里就什么都不做、也不抛错——规则静默缺席，而不是退回强制整条提示那条路。
 //
-// ── 规则的来源，以及本地只剩的那两处差异 ─────────────────────────────────────
-//
-// 第 2、3 句**逐字照搬上游**：`0a41d5d`（#485）把入口收窄成「onboarding / PR 生命周期 / 仍有产品与
-// 设计选择未决」三类，并要求已路由的工作继续做、其余直接做且不做路由声明。本地差异两处：
-//
-//   1. **第 1 句不是逐字的**：上游写 "read the choosing-a-workflow skill"，本插件补了加载路径
-//      （`Skill` 工具 + id `pi.thinkrail/choosing-a-workflow`）。这不是偏好：PI-Desktop 的技能目录
-//      是用 id 编的、正文按 id 取，规则又排在目录之后，不写 id 模型就没法把它和目录里的条目对上。
-//   2. **多一句（第 4 句）：先确认项目有没有 spec 图。** 这不是给路由器加一条新路由，而是把分类表
-//      第一行的前提（"no spec graph yet"）提到分类之前：有代码、没有 spec 的项目，用户应当拿到
-//      onboarding 这个选择，而不是被悄悄当成普通工作。路由仍由 `choosing-a-workflow` 决定——它的
-//      红榜写着 "a forced route is worse than none"，所以这里只说「先确认、并把选择交给用户」。
-//
-// 上游的第二条常驻规则（spec-graph 的 `SPEC_RULE`，同样写 `sections["pi-spec-graph"]`）在本插件里
-// **没有**对应的扩展：那四条义务由 `skills/spec-graph.md` 的 description 与正文承载（按需加载）。
-// 这是有意的载体差异（一个插件只声明一条扩展，代价面更小），四条义务逐条能在那篇里找到。
+// The entry scope is a family contract; see writing-workflow-skills.md, meta-rule 4.
+// PI-Desktop needs an explicit Skill id because its skill catalog is addressed by id.
 //
 // 改动这段规则属于「系统级改动」：按本插件 `skills/writing-workflow-skills.md` 的元规则 13，先改那里
 // 的元规则与家族表，再改这里。
@@ -61,10 +47,10 @@ export const WORKFLOW_SECTION = "pi-thinkrail-workflow";
 
 /** 每轮注入系统提示的那一节文字。 */
 export const WORKFLOW_RULE = [
-	"At the start of a new piece of work, read the `choosing-a-workflow` skill (Skill tool, id `pi.thinkrail/choosing-a-workflow`) for project onboarding or any PR lifecycle work.",
-	"For other new changes, read it only when product scope, user-visible behavior, or architecture remains to decide.",
-	"Continue work already routed to a workflow without routing it again; otherwise proceed directly without loading or announcing one.",
-	"Before classifying, check whether the project has a spec graph at all: an existing codebase with none is the onboarding case, so say so and let the user decide rather than treating the project as ordinary work.",
+	"At the start of any new piece of work — a request, feature, change, fix, question, or fresh project idea —",
+	"read the `choosing-a-workflow` skill (Skill tool, id `pi.thinkrail/choosing-a-workflow`) FIRST and follow it: it routes the work to the workflow skill",
+	"that governs it, or tells you none applies.",
+	"At the first request in a project session, if source code exists but no durable spec graph exists, finish project setup before handling that request — whatever it asks — then return to it. A temporary task-spec under `.thinkrail/context/` does not count as a durable graph; a chat without an attached project is not a project session.",
 ].join("\n");
 
 /**

@@ -117,19 +117,16 @@ The rules below were written for a host with a standing prompt rule, sibling-doc
 in-repo e2e harness. PI-Desktop gives a plugin none of those, so four of them read differently here —
 the intent is unchanged:
 
-- **Discovery (rule 4).** This host gives a plugin an agent extension (`agent.extension` +
-  `contributes.agentExtensions`) whose `before_agent_start` hook may write into the host's **own**
-  prompt sections — and this plugin uses exactly that for the standing rule:
-  `extensions/workflow-rule.mjs` sets `systemPromptOptions.sections["pi-thinkrail-workflow"]` every
-  turn, the same mechanism upstream uses (it never forces a whole prompt). That
-  rule scopes its own pointer: project onboarding or any PR lifecycle work goes to the **root router**;
-  for other new changes the pointer appears only when product scope, user-visible behavior, or
-  architecture remains to decide; work already routed continues without being routed again; and
-  everything else proceeds directly, with nothing loaded or announced. So the router is in front of the
-  agent exactly when a workflow-eligible class is in play, not always. Everything below the router is
-  still reached the upstream way: by a routing line, by the skill step that names it, or by a narrow
-  self-trigger `description`. Rule 5 therefore still carries the real weight for every skill except
-  `choosing-a-workflow` — its description is the trigger surface for all of them.
+- **Discovery (rule 4).** PI-Desktop lets this plugin register an agent extension (`agent.extension` +
+  `contributes.agentExtensions`). Its `before_agent_start` hook writes into the host's named
+  `systemPromptOptions.sections` slot and returns no `systemPrompt`, preserving the rest of the prompt.
+  This plugin's pointer applies to first requests in project sessions: when source code exists without a
+  durable spec graph (ignoring `.thinkrail/context/` task-specs), complete onboarding before handling the
+  request, then resume it. Existing graphs skip automatic setup; chats without a project do not imply an
+  empty project. Every new request still enters the root router, and any project change enters
+  `brainstorming`, including small or fully specified changes. Continuing work stays in its active
+  workflow. Everything below the router is reached by a routing line, a named handoff, or a narrow
+  self-trigger `description`.
 - **Shape (rules 1, 3).** One skill = one file. Where upstream moved a workflow's internal nodes into
   sibling docs, here they are sections of the skill's own file — or the skill is split when something
   outside must reach a part directly.
@@ -169,13 +166,11 @@ them.
 | **Worker** | one workflow's steps — in its body's sections | a handoff — fixed successor, back to its caller, or a terminal state (rule 6) |
 | **Concept** | one topic's reusable rules, conventions, or mental model — no steps, no routing | nothing — no ending section at all; control simply returns to its reader |
 
-The **root router** is the single entry for new workflow-eligible work; one always-on rule names those
-classes and points them at it (rule 4), and work already routed resumes its active workflow instead of
-re-entering the router. Branch skills may route further (fractal routing). A **concept** is not a
-process building block — routers and workers name it at the exact step that needs it, and it is never a
-route: the router classifies *work*, and a concept is not work.
-
-**Patterns** (vocabulary, not roles — no instances yet; for complex work):
+The **root router** is the single entry for every new piece of work; the always-on rule points every
+request there (rule 4). Work already routed resumes its active workflow instead of re-entering the
+router. Branch skills may route further (fractal routing). A **concept** is not a process building
+block — routers and workers name it at the exact step that needs it, and it is never a route: the router
+classifies *work*, and a concept is not work.
 
 - **Composer** — a *stateful router*: agrees a per-task pipeline with the user, records it in the
   task-spec's **Pipeline section** (checkboxes = plan + frontier + history), and walks it, adjusting as
@@ -208,12 +203,10 @@ pipeline state is task-spec content; stage transitions are ordinary handoffs.
 
 **Discovery & entry**
 
-4. At the start of a new piece of work, one always-on entry rule names the workflow-eligible classes —
-   project onboarding and PR lifecycle work take precedence regardless of whether they edit code; other
-   changes enter only when they require product or design decisions. The rule points only those classes
-   at the root router (this plugin's `extensions/workflow-rule.mjs` writes it into its own prompt
-   section every turn — see "What this host changes" above). Work already routed resumes its active workflow;
-   all other work proceeds directly without loading or announcing one. Skills are otherwise reached by
+4. Every new piece of work — request, feature, change, fix, question, or idea — first goes through the
+   root router before the agent starts work or chooses an approach. The always-on rule points every new
+   request there; the router then selects a workflow or says none applies. Continuing work already
+   routed stays in its active workflow rather than starting over. Skills are otherwise reached by
    routing/handoff, or — when the trigger is unmistakable — by a narrow self-trigger `description`:
    alongside a route (as `setting-up-a-project` does) or, for skills outside the router's work
    classification (meta/authoring skills), self-trigger alone (as this skill does). Concept skills are
@@ -245,9 +238,9 @@ pipeline state is task-spec content; stage transitions are ordinary handoffs.
 
 **Scaling**
 
-10. Scale by route and composition, not by prose: work that needs no workflow decision bypasses the
-    router; the router sends eligible simple work down short paths; optional phases carry explicit
-    "when to use / when to skip" criteria. Depth lives in the route taken.
+10. Scale the *depth*, not whether project changes use a workflow: route every new piece of work through
+    the root router, and send any work that creates or changes the project to `brainstorming`, however
+    small. Keep simple work on short paths; deeper work uses the fuller design flow.
 11. Gates where discipline matters, matching the form to the failure: prohibitions + red-flags for
     discipline violations; positive recipes for output shape.
 
@@ -258,10 +251,10 @@ pipeline state is task-spec content; stage transitions are ordinary handoffs.
     branch under an already-routed workflow — (self-trigger-only skills and concept skills per rule 4
     skip the router line: a designed exception, never a size call) + one row in the family table in
     this file, including its **Routed from** entry. The *entry* itself is not a skill: it is the
-    standing rule in `extensions/workflow-rule.mjs`, whose pointer to the root router is conditional on
-    the work's class (rule 4) — which is why the root router needs no route of its own. Changing that
-    rule is a system-shaping change (rule 13) — and it needs the `agent.extension` permission, so it is
-    the one place where this family ships code that runs in the agent process.
+    standing rule in `extensions/workflow-rule.mjs`, whose pointer sends every new piece of work to the
+    root router (rule 4) — which is why the root router needs no route of its own. Changing that rule
+    is a system-shaping change (rule 13) — and it needs the `agent.extension` permission, so it is the
+    one place where this family ships code that runs in the agent process.
 13. The rules lead: system-shaping changes update the meta-rules in this file first; the checklist
     above carries only the actionable steps and points here for rationale.
 14. Verify by use — **suspended: a known limitation, not currently a done-gate**. The intended rule: a
@@ -281,11 +274,11 @@ pipeline state is task-spec content; stage transitions are ordinary handoffs.
 
 | Skill | Role — purpose | Routed from | Status |
 |---|---|---|---|
-| `choosing-a-workflow` | router (root) — classification + routing for workflow-eligible work | — (conditional pointer from the always-on rule, rule 4) | active; unverified by use |
+| `choosing-a-workflow` | router (root) — first classification and routing for every new piece of work | — (always-on entry rule, rule 4) | active; unverified by use |
 | `setting-up-a-project` | router (sub) — dispatcher: detect the workspace's state (specs present / empty / code-only) and route | `choosing-a-workflow` + narrow self-trigger | active; unverified by use |
 | `starting-a-new-project` | worker — inception interview (empty repo → goal-and-requirements) | `setting-up-a-project` + narrow self-trigger | active; unverified by use |
 | `importing-a-codebase` | worker — existing codebase → first spec graph (derive + adopt existing docs + minimal interview) | `setting-up-a-project` + narrow self-trigger | active; unverified by use |
-| `brainstorming` | worker — decision-bearing change → validated task-spec | `choosing-a-workflow` | active; unverified by use |
+| `brainstorming` | worker — any project change, however small → validated task-spec before implementation | `choosing-a-workflow` | active; unverified by use |
 | `shipping-a-pr` | worker — PR lifecycle (create with gates / body or screenshot maintenance / up-to-date sync / checks / review comments — phases as sections) | `choosing-a-workflow` + narrow self-trigger | active; snapshot-by-default completion and verification reuse unverified by use |
 | `asking-user-questions` | concept — `ask_user_question` rounds, options, inference confirmation, degradation | — (reached by name, rule 4) | active; unverified by use |
 | `writing-specs` | concept — the spec quality bar for every spec-producing flow | — (reached by name, rule 4) | active; unverified by use |
@@ -302,23 +295,21 @@ get their own task-spec when they earn their place. The concept role has three i
 The family's known debt, stated honestly and tracked here until each item earns its fix:
 
 - **Rule 14 (verify-by-use) is suspended** — not a done-gate, and in this plugin nothing has been
-  observed flowing by use: the standing rule is read for the classes it names — the router included —
-  but whether the routing then matches the work has not been watched in a real session, and the
-  plugin's test suite pins contract-level facts (the module writes exactly one section, it is declared with its
-  permission, no skill points at a sibling file) rather than observed routing. Every process row above
-  carries that debt — and the standing rule itself is only as good as its wording, which is exactly why
-  changing it is a system-shaping change (rule 13).
+  observed flowing by use: the rule now routes every new piece of work to the router, but whether the
+  router and workers follow their routes has not been watched in a real session. The test suite pins
+  contract-level facts (section injection, skill declarations, and frontmatter), not observed routing.
+  Process rows carry that verification debt honestly; update them when a real request is observed.
 - **Extending an existing spec graph has no worker.** Partial graph → complete graph (a missing
   `architecture.md`, un-specced modules, stale nodes) falls between the two setup workers:
   `importing-a-codebase` refuses specced repos and `brainstorming` designs new work rather than
-  documenting existing reality. The dispatcher carries only the operational instruction: align to the
-  user's request on judgment without a routing announcement, holding the `writing-specs` bar — until
-  the `extending-a-spec-graph` candidate earns its place.
+  documenting existing reality. If the graph-extension offer is accepted, the dispatcher says no
+  dedicated skill covers it, then uses its own judgment under the `writing-specs` bar — until the
+  `extending-a-spec-graph` candidate earns its place.
 - **`writing-specs` overlaps the `spec-graph` skill**: both carry lean/honest spec guidance. The
   declared split — this family owns the quality bar, `spec-graph` owns graph mechanics — is convention
   only, enforced by nothing. As `writing-specs` grows into the home for the family's spec rules, the
   `spec-graph` skill's guidance should slim to mechanics.
 - **Most candidates are unbuilt** — deliberate, since each earns its place through real use. Until
-  then, work outside an existing route proceeds directly on agent judgment, with no routing
-  announcement; complex decision-bearing work still enters `brainstorming`, while a future composer may
-  own multi-stage pipelines.
+  then, every new request still enters the root router; project-changing work goes to `brainstorming`,
+  while direct-answer cases are classified there and proceed without a worker. The family still lacks
+  a dedicated worker for multi-stage pipelines or extending an existing spec graph.

@@ -1,6 +1,6 @@
 ---
 name: starting-a-new-project
-description: "Use when the workspace is empty, has no code, and the user brings a raw project idea. Normally reached via setting-up-a-project; not for an existing project."
+description: "Use when the workspace is empty and the user brings a raw project idea — normally through setting-up-a-project, directly only when unmistakable. Not for features in existing projects; use brainstorming."
 ---
 
 > 移植自 JetBrains/ThinkRail 的 `packages/pi-thinkrail-workflow/skills/starting-a-new-project`（MIT）。
@@ -8,8 +8,7 @@ description: "Use when the workspace is empty, has no code, and the user brings 
 # Starting a new project
 
 The workspace is empty: no code, no decisions. Turn the user's idea into one clear, buildable document —
-`goal-and-requirements.md` — then use `brainstorming` only for later features that still require a
-product or design choice.
+`goal-and-requirements.md` — then hand off to `brainstorming` for the features that follow.
 
 **Hold the writing-specs bar.** Read that concept skill before saving anything — it carries the
 short / honest / on-rails rules every section you save must meet.
@@ -87,6 +86,6 @@ binary Done Conditions instead of metrics). Reject vague goals inline: "'Better 
 ## Next
 
 State plainly that the spec is saved. Suggest the natural next step — sketch `architecture.md`, then
-use `brainstorming` only when a feature still requires choosing scope, user-visible behavior, or
-architecture. Fully specified work proceeds directly. There is no board/ticket hand-off — say it and
-stop: **this workflow ends here**.
+hand off to `brainstorming` for the features that follow. There is no board/ticket hand-off — say it and
+stop: **this workflow ends here**; feature work from now on routes through
+`choosing-a-workflow` → `brainstorming`.

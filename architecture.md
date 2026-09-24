@@ -142,21 +142,11 @@ commands 都是运行时注册表），这边是一个隔离的插件进程，�
   宿主说读不到根时索引不把它当成空仓库（那会把失败说成成功），把宿主的错误原样交给模型。
 - 面板是窗口级视图：面板调用没有会话 id，继续跟随宿主当前激活的项目，并保留「没有激活项目」的说明。
 - 技能的 name 必须等于文件名，description ≤240 字符，单文件 ≤128 KiB。
-- 唯一不在沙箱内的代码是 `extensions/workflow-rule.mjs`（声明为 `contributes.agentExtensions`，
-  需要 `agent.extension`）：它在 **agent 进程内**挂 `before_agent_start`，把那条入口规则**写进宿主自己的
-  命名 section**（`pi-thinkrail-workflow`；宿主的约束是 `/^[a-z][a-z0-9_-]*$/` 且不可为 `preamble`，
-  违规会在拼装提示时抛错），这正是上游的投递机制——写 `systemPromptOptions.sections[<name>]` 并返回
-  空对象，**绝不**返回 `systemPrompt`（那是“强制整条提示”路径，会丢掉所有结构化 section，
-  包括其他插件贡献的）。兼容最低版本为 PI-Desktop `0.15.6`：具名 section 是常驻规则的必要投递面，
-  manifest 拒绝更旧宿主；运行时若仍缺少 section map，扩展安全地不贡献规则，绝不回退到整条提示。
-  渲染出来的 `<pi-thinkrail-workflow>…</pi-thinkrail-workflow>` 排在宿主内建 section 之后并**结尾于提示尾部**，所以仍是最强指令位置；
-  只在 onboarding、PR 生命周期、以及仍有产品与设计选择未决的改动上要求读路由器，其余工作直接做、
-  不做路由声明——它与路由器 description 是一对，改一边必须改另一边。上游的两条常驻规则各由一个扩展
-  承载（workflow 的 `WORKFLOW_RULE`、spec-graph 的 `SPEC_RULE`），本插件只声明这一条，spec-graph 那
-  半由 `spec-graph` 的 description 与正文承载。它必须保持可审阅：无 import、无 require、不碰文件系统
-  与网络、只写自己那一节、绝不替换整条提示；测试钉这几条（含对着宿主自己的 section 名正则的那条真机
-  检查）。它承载的是原版靠 `before_agent_start` 常驻规则提供的「入口总会跑」，因此改它的措辞属于
-  系统级改动（先改 `skills/writing-workflow-skills.md` 的元规则 13，再改它）。
+- 唯一不在沙箱内的代码是 `extensions/workflow-rule.mjs`（声明为 `contributes.agentExtensions`，需要 `agent.extension`）：它在 **agent 进程内**挂 `before_agent_start`，把固定规则写进宿主具名 section `pi-thinkrail-workflow`，返回空对象，绝不返回 `systemPrompt`。宿主要求 section 名匹配 `/^[a-z][a-z0-9_-]*$/` 且不能为 `preamble`；违规会在拼装提示时抛错。
+  当前宿主兼容下限是 PI-Desktop `0.15.6`。section 排在宿主内建内容之后并结尾于 prompt 尾部；运行时若无 section map，扩展安全地不贡献规则，不回退到强制整条提示。
+  本地路由策略按用户选择恢复 pre-#485 宽入口：每个新请求（含问题）先读 root router；任何项目变更都进入 brainstorming，不因小或约束明确而跳过。另有 PI-Desktop 首会话 onboarding 前置规则：对附加项目的首条请求，若已有源码但不存在 durable spec（Markdown frontmatter 同时含非空 `id`/`type`，且路径不在 `.thinkrail/context/`），先运行 `setting-up-a-project` → `importing-a-codebase`，完成后续接原请求；已有 durable graph 跳过，未附加项目的聊天不触发。
+  规格查询遵循 specs-before-code：探索、调查、规划、实现或检查任务时先读相关规格，再读代码。上游第二条 `pi-spec-graph` 常驻规则没有单独扩展，由 `spec-graph` 技能正文承载。
+  模块必须可审阅：无 import、无 require、不碰文件系统与网络、只写自己的 section；测试核对宿主 runner、section composer 与入口规则。路由范围是有意的本地分叉，改变时同时更新 `writing-workflow-skills` 元规则、扩展、技能、测试和本文。
 
 ## 范围之外
 

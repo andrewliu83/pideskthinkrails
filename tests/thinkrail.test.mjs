@@ -758,9 +758,30 @@ test("the standing-rule module is declared with its permission and stays auditab
   );
 
   const rule = options.sections[mod.WORKFLOW_SECTION];
-  assert.match(rule, /whether the project has a spec graph/, "asks for the case this plugin most needs unprompted");
-  assert.match(rule, /onboarding case/, "and names the classification, without forcing the route");
-  assert.match(rule, /otherwise proceed directly without loading or announcing/, "and states the direct-work boundary (#485) that replaced the question carve-out");
+  assert.match(rule, /At the start of any new piece of work/, "every new request enters the root router");
+  assert.match(rule, /FIRST and follow it/, "the router runs before work or approach selection");
+  assert.doesNotMatch(rule, /before classifying, check whether the project has a spec graph/i, "the root router, not an extension precheck, classifies onboarding");
+  assert.doesNotMatch(rule, /only when product scope|otherwise proceed directly without loading/, "the #485 narrow-entry language stays removed");
+
+  const router = readFileSync(join(PLUGIN_DIR, "skills/choosing-a-workflow.md"), "utf8");
+  assert.match(router, /Does the work create or change anything in the project/);
+  assert.match(router, /At the first user request in a session attached to a project/);
+  assert.match(router, /onboarding is automatic and takes priority over the\s+first request, whatever the request asks/);
+  assert.match(router, /ignore task-specs under `\.thinkrail\/context\/`/);
+  assert.match(router, /return to the original request/);
+  assert.match(rule, /At the first request in a project session, if source code exists but no durable spec graph exists/);
+  assert.match(rule, /before handling that request.*whatever it asks.*then return to it/);
+  assert.match(router, /\*\*Existing source code, no durable spec graph:\*\* onboarding is automatic/);
+  assert.match(router, /A durable spec graph exists:\*\* do not run onboarding automatically/);
+  assert.match(router, /Do not first answer a question, research another topic, or/);
+  const setup = readFileSync(join(PLUGIN_DIR, "skills/setting-up-a-project.md"), "utf8");
+  assert.match(setup, /\*\*No durable specs · real source code\*\*.*`importing-a-codebase`/);
+  assert.match(setup, /return to that original request in the same session/);
+  const importer = readFileSync(join(PLUGIN_DIR, "skills/importing-a-codebase.md"), "utf8");
+  assert.match(importer, /automatic first-session prerequisite, return to the queued original request/);
+  const specGraph = readFileSync(join(PLUGIN_DIR, "skills/spec-graph.md"), "utf8");
+  assert.match(specGraph, /Reach for the spec tools first/);
+  assert.doesNotMatch(specGraph, /Keep lookup proportional/);
 
   // section 名的约束来自宿主（`/^[a-z][a-z0-9_-]*$/`，且不可为 `preamble`）；违规会在拼装提示时抛错，
   // 所以这个名字不能随手改。真机那一侧还有一条对着宿主自己那条正则的检查。

@@ -16,10 +16,7 @@ tags: [port, pi-desktop, thinkrail]
 载体真的没有那个能力，那就必须在 `architecture.md` 里明说是换载体而不是丢能力。worktree 那一层是
 **主动移除**（见"范围之外"），不在此列。
 
-工作流这一侧的参照（1.4.0 起）是**上游 `JetBrains/thinkrail` 本身**，而不是 DSH 那份移植：DSH 副本仍
-停在 #485 之前（`brainstorming` 还写着"太小也要过一遍"，`asking-user-questions` 还写着自由文本回复
-"取代本轮"），本插件已按 #485/#486/#487/#519/#520/#517 对齐上游。所以这一侧的判据是"与上游一致"，
-与 DSH 版的差异是**已知且接受**的分叉（给 DSH 版做修改在范围之外，见下）。
+工作流这一侧的最新上游参考是 `JetBrains/thinkrail`。本地移植保留较新的 PR 生命周期、问答卡和技能载体改进，但按用户选择**恢复 pre-#485 的宽入口**：每个新请求先过 root router，所有项目改动都走 brainstorming（不因小或已明确而跳过），规格查询先于代码。该行为与当前上游不同，是有意的本地工作流选择，记录于 `architecture.md`；给 DSH 版做任何修改仍在范围之外。
 
 ## 范围
 
@@ -46,10 +43,9 @@ tags: [port, pi-desktop, thinkrail]
   ③ 用 sidecar `# Skills` 渲染函数核对 10 篇技能与描述上限；④ 用宿主 section 名正则与 runner 核对常驻规则投递（包括 `systemPrompt` 是强制整条提示的语义）；
   ⑤ 从宿主 main bundle 提取并执行 `resolveFsRequest`、realpath containment helpers，以临时 workspace symlink fixture 验证项目外读写被拒。该项控制权限/scope fixture，不代表完整 Electron IPC/授权 UI 测试。
   假宿主另按 manifest fs scope 验证插件写入边界（写只允许 `.md` 与 `.thinkrail/**`，删只允许本插件写过的文件）。
-- 工作流这一侧（技能正文与常驻规则）与上游 `JetBrains/thinkrail` 的对应关系必须能追到它自己的
-  规格：常驻规则按上游 SPEC 的机制投递——写 `systemPromptOptions.sections[<name>]` 且返回空对象，
-  绝不返回 `systemPrompt`（上游明确不用"强制整条提示"那条路）；技能的每处本地改写都要么在
-  `architecture.md` 里记为载体差异，要么删掉。
+- 工作流正文与常驻规则必须内部一致；不要求与当前上游的触发范围逐字一致。本地对 pre-#485 宽入口的有意偏离必须记录在 `architecture.md`，并由回归测试覆盖。常驻规则仍按宿主具名 section 投递，写 `systemPromptOptions.sections[<name>]` 且返回空对象，绝不返回 `systemPrompt`。
+- 首会话自动 onboarding：附加项目中存在源码但无 durable spec（frontmatter 同时含非空 `id`/`type`、排除 `.thinkrail/context/` 临时 task-spec）时，无论首条请求内容如何，都先进入 setup/import；已有 durable graph 和未附加项目不触发；setup 完成后续接原请求。测试覆盖这些规则及 handoff。
+- auto-onboarding 的路由规则测试只证明提示/技能合同；若无真实 agent e2e harness，不宣称已验证模型运行时路由行为。
 - `python3 scripts/pack_plugin.py plugins/pi.thinkrail` 成功，包 < 2000 文件 / 50 MB。
 - `python3 scripts/security_audit.py --check-packages` 0 blocker；每条 manual-review 信号
   都要在仓库 README 里有一句可核对的实际行为。

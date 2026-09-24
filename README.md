@@ -55,7 +55,7 @@ tests/                 41 个测试，含宿主装载、manifest 校验、sectio
 |---|---|---|
 | `ctx.tools.register` + 原始 JSON Schema | `pi.agent.registerTool` | 现在 7 个工具（`spec_*`）的名字、参数、判据、输出措辞逐字保留；风险分级为 low/medium/high。原版的 6 个 `worktree_*` 工具随 worktree 层主动移除（见下） |
 | `ctx.skills.register` + `resourceBase` | `contributes.skills` | 声明式，一个技能一个文件。`shipping-a-pr` 的 5 篇阶段文档折成一篇的分节 |
-| 两条常驻 `systemPrompt.section` 规则 | `agent.extension` + `before_agent_start`（`extensions/workflow-rule.mjs`） | 上游把规则写进宿主的**命名 prompt section**（`systemPromptOptions.sections[<name>]`，且不返回任何东西），本插件照同一机制写 `pi-thinkrail-workflow`——1.2.0–1.4.0 曾尝试用返回 `{ systemPrompt }` 追加到末尾（理由是"宿主不给插件 prompt section"），但宿主会把它当作**强制整条提示**并丢掉所有结构化 section（含别的插件贡献的），1.4.1 改回与上游一致。最低支持 PI-Desktop 0.15.6；扩展只写自己的 section，从不返回 `systemPrompt`，若没有 section map 就安全地不贡献规则，绝不回退为追加或替换整条提示。渲染出来的 `<pi-thinkrail-workflow>…</…>` 排在宿主内建 section 之后并结尾于提示尾部（仍在技能目录与 `AGENTS.md` 之后）。内容折成一条指向根路由器的规则（+ 本插件特有的「无 spec 图」条件）；其余判据仍搬进技能描述。代价是这一项权限脱离 fs 网关，所以模块刻意无 import、不碰 fs/网络 |
+| 两条常驻 `systemPrompt.section` 规则 | `agent.extension` + `before_agent_start`（`extensions/workflow-rule.mjs`） | 上游把规则写进宿主具名 section，本插件同机制写 `pi-thinkrail-workflow`，不返回 `systemPrompt`。每个新请求先读 router；首条项目请求若有源码但无 durable graph，则先自动 setup/import（忽略 `.thinkrail/context/` 临时 TASK），完成后续接原请求；已有图或无项目聊天跳过。任何项目改动都进入 brainstorming。
 | `ctx.workspaceRegistry.create()` | 无 | **主动移除**。worktree 层按作者决定主动移除：宿主改成按发起调用的会话决定 `pi.fs.*` 的根之后，那半边（自己 spawn git、拿窗口可见项目当 `-C`）无法跟随会话，是这份插件里唯一还能作用到错项目的能力 |
 | `${DSH_HOME}/thinkrail/*.json` | 无（`contributes.settings` 为空） | **主动移除**（同上，worktree 层）：花名册不再写也不再读；原版这里存的两项设置都是 worktree 专用，插件现在 0 个设置，没有设置页 |
 | `/dsh-thinkrail/*` HTTP API | `onPanelInvoke` 的 channel | 只保留面板真正消费的：`state` / `grep` / `spec` / `hint`；`/slice`（客户端从未调用）、`/config`（设置随 worktree 层一起移除）与 `worktree` channel（同上，worktree 层主动移除）删除 |
@@ -76,9 +76,9 @@ DSH 版与上游 ThinkRail 的对应关系（哪些是移植、哪些是有意�
     新增 symlink fixture 从宿主 main bundle 提取并执行 `resolveFsRequest`、`resolveRealPathWithinRoot` 和 `resolveRealPathForCreateWithinRoot`，对临时 workspace 的文件/目录链接验证项目外读写被拒。
   - `thinkrail.test.mjs`：假宿主按 manifest scope 拒绝越界写入，验证插件声明的调用范围。
 - **边界说明：**symlink fixture 执行宿主原始路径 resolver，但将权限/scope 与文件 API 调用端控制在测试中；`host-load` 的 `fs.*` 响应也是 mock。因此它验证 resolver 的真实 realpath containment，不等同于完整 Electron IPC、授权 UI 或并发 symlink race 的端到端测试。
-- `python3 scripts/pack_plugin.py plugins/pi.thinkrail` 用于本地生成包。下列大小与 hash 是本次源码修改前记录的产物，**不是当前工作树的打包结果**；发布前需重新打包。
-  记录值：129 个文件、550 KB（上限 2000 文件 / 50 MB），sha256 `9bce1c9e…3388a`；其中 94 个是随包发布的 `lib/vendor/yaml/dist/**`。
-- `python3 scripts/security_audit.py --check-packages` 应在重新打包后执行。此处“0 blocker、4 条人工复核”是修改前包的审计记录，**本次修改后未重跑**。
+- `python3 scripts/pack_plugin.py plugins/pi.thinkrail` 生成当前包 `packages/pi.thinkrail-1.5.0.piplug`（git 忽略，不随源码提交）。
+  130 个文件，ZIP 561271 字节，解压 541929 字节；sha256 `703bc8a9fd7c470ab4a007edf458421e3bd5f7adc2c6ef1fb11267c2db863c20`。
+- `python3 scripts/security_audit.py --check-packages` —— 当前 1.5.0 包审计 **0 blocker、4 条 manual-review 信号**；自动检查通过，人工复核信号见下。
   脚本是 marketplace 工具的**原件照抄**，`agent.extension` 会被它作为未知权限报给宿主策略复核——那是预期信号，不是缺陷。
 - 索引与面板读路径在真实项目上量过（`直播`，11672 个目录 / 573 个 `.md` / 11 个 spec），
   单位是**宿主的 fs API 调用次数**——每次调用都是一趟进程间往返外加宿主一条审计日志：
@@ -108,13 +108,11 @@ DSH 版与上游 ThinkRail 的对应关系（哪些是移植、哪些是有意�
 
 ## 升级已装好的那份
 
-宿主安装插件时会**复制**到 `~/.pi-desktop/plugins/installed/<id>/`，仓库里的改动不会自动过去。1.4.1 改的是**行为**而不是权限（常驻规则改为写入命名 prompt section，另更新了两处技能正文）；要拿到新版，得把它装进去：
+宿主安装插件时会**复制**到 `~/.pi-desktop/plugins/installed/<id>/`，仓库里的改动不会自动过去。1.5.0 恢复宽入口并增加首会话自动 setup；若已安装旧版，需要更新安装：
 
-1. **Plugins → Install plugin package** 选 `packages/pi.thinkrail-1.4.1.piplug`
-   （sha256 `9bce1c9e…3388a`）；如果不能覆盖现有安装，先 Remove 再装。
-2. 想走开发流就用 **Plugins → Load dev plugin** 直接选 `plugins/pi.thinkrail` 目录——之后改代码
-   会热重载，但权限再变还是要重新选一次目录。
-3. 装完按 `Mod+J`，页签列表里就会出现 **ThinkRail**；常驻规则生效的验证方式见下文。
+1. **Plugins → Install plugin package** 选择 `packages/pi.thinkrail-1.5.0.piplug`；若不能覆盖，先 Remove 再装。
+2. 或用 **Plugins → Load dev plugin** 选择 `plugins/pi.thinkrail`，直接运行当前源码。
+3. 安装/加载后按 `Mod+J` 打开 ThinkRail 面板。
 
 ## 技能在哪里（为什么"设置 → 技能"里看不到）
 
@@ -144,12 +142,11 @@ PI-Desktop 有三套技能目录，最后**合并成同一段提示**送给模�
 
 所以**描述就是常驻指令**（这也是我把 6 条过长的描述改写到 240 字符以内的原因——超出的部分会被
 宿主截断，而被截掉的正好是"不适用时该用什么"那半句路由信息），**正文由模型按 id 用 `Skill`
-工具按需取**。这一块 + `1.2.0` 起的那条常驻规则（`extensions/workflow-rule.mjs`，见下节；1.4.0 起按
-上游 #485 收窄了触发面，1.4.1 起改成写宿主自己的命名 prompt section `pi-thinkrail-workflow`——与上游
-同一机制）才是 DSH 那两条常驻 `systemPrompt.section` 的等价物：技能目录负责"有哪些
-技能、什么时候用"，常驻规则负责"该走工作流的入口每次都跑"——onboarding、PR 生命周期，以及仍有产品
-与设计选择未决的改动；其余工作（已完全指定的修复、机械重构、文档、纯配置、提问）直接做。描述本身
-仍是**条件式**的，所以叶子技能仍需被路由或被匹配到。
+工具按需取**。这一块 + `1.2.0` 起的常驻规则（`extensions/workflow-rule.mjs`，见下节；1.4.1 起写入宿主
+具名 prompt section `pi-thinkrail-workflow`，不再强制替换整条提示）才是 DSH 常驻规则的等价物。当前 1.5.0
+开发源恢复 pre-#485 宽入口：每个新请求先过 router，任何项目改动都进入 brainstorming，不因规模小或规格明确
+而跳过。另在附加项目会话的首条请求前检查 durable graph：有源码但无图时自动 setup/import，再续接原请求；已有图
+或无项目聊天跳过自动 setup。已打包的旧 1.4.1 产物不包含此行为，安装前请使用 1.5.0 包或 Load dev plugin。
 
 这段块在会话运行时构造时生成，但**不需要新开会话**：sidecar 的 `canReuse(config)` 把技能目录的
 digest 也算进"能不能复用这个运行时"的判断里，并注明——
@@ -170,10 +167,9 @@ digest 也算进"能不能复用这个运行时"的判断里，并注明——
 - 121 个渲染层资源里，与技能相关的 UI 只有 `listUserSkills` / `createUserSkill` / `importUserSkill` / `updateUserSkill`（都指向用户技能目录）。
 
 所以想确认这 10 篇在不在，只有两条路：问 agent（它的基础提示里有这段块），或者读源码（见上）。
-**触发方式**：直接说"加载 `pi.thinkrail/setting-up-a-project` 技能并照做"，或者描述任务让模型按描述
-自己匹配（"帮我给这个项目建 spec 图"）。从 1.2.0 起还有一条**常驻规则**（见"[无条件常驻规则](#the-standing-rule)"
-那节，中文说明在插件 README 里）把根路由器推到模型面前；1.4.0 起它只在三类工作上触发——onboarding、
-PR 生命周期、以及仍有产品与设计选择未决的改动——其余工作直接做，也不声明"没有匹配的工作流"。
+自己匹配（“帮我给这个项目建 spec 图”）。常驻规则把**每个新请求**都送到 `choosing-a-workflow`。首条项目请求发现
+源码且无 durable graph 时，先完成 setup/import，再回到原请求；否则 router 将项目变更交给 brainstorming（无论大小/是否
+已明确），并把问答/解释/检查判为无 worker 后直接处理。已有图的首条请求不会自动 setup。
 `tests/manifest-host-check.test.mjs` 里有一条测试把这段文本**用 sidecar 自己的渲染函数**跑出来校验——
 10 条 id、完整描述、以及"描述不得超过 240 字符"，任何一条退化都会让测试红掉，而不是悄悄把提示变差。
 那个渲染函数是**按结构定位的，不按名字**：宿主 0.15.6 就把它压成了单字母名（块里引用的 `Skill`

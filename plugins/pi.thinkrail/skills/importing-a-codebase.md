@@ -1,6 +1,6 @@
 ---
 name: importing-a-codebase
-description: "Use when asked to create the initial spec graph for an existing codebase that has source code but no specs. Normally reached via setting-up-a-project."
+description: "Use for an existing codebase with source but no specs — normally through setting-up-a-project, directly only when unmistakable. Not for empty workspaces or feature work in a specced project; use starting-a-new-project or brainstorming."
 ---
 
 > 移植自 JetBrains/ThinkRail 的 `packages/pi-thinkrail-workflow/skills/importing-a-codebase`（MIT）。
@@ -102,5 +102,4 @@ with a one-line note — don't guess elaborately.
 - Tell the user the specs are drafted on this workspace's branch — **review them with `git diff` (或右栏 Spec 图页签); nothing merges
   until they approve** — and summarize what you inferred vs. what they confirmed, which docs were
   adopted vs. left as input, and any drift corrections made.
-- Point at `brainstorming` only for later work that requires choosing product scope, user-visible
-  behavior, or architecture; fully specified work proceeds directly. **This workflow ends here**.
+- If this import was an automatic first-session prerequisite, return to the queued original request after the graph is validated. Otherwise hand off to `brainstorming` for the user's requested project changes. **This workflow ends here**.

@@ -23,11 +23,8 @@ and asks the view to switch to that page.
   `setting-up-a-project`, `starting-a-new-project`, `importing-a-codebase`, `brainstorming`,
   `writing-specs`, `asking-user-questions`, `shipping-a-pr`) and `writing-workflow-skills`, the
   authoring checklist and meta-rules for the family itself.
-- **One standing rule (an agent-process extension)** — `extensions/workflow-rule.mjs` writes a short
-  unconditional instruction into its own prompt section every turn (`pi-thinkrail-workflow`, the same
-  mechanism upstream ThinkRail uses), pointing the agent at `choosing-a-workflow` (and naming the
-  "project has no spec graph yet" case). It is the only code here that runs outside the fs gateway —
-  see [The standing rule](#the-standing-rule).
+- **One standing rule (an agent-process extension)** — `extensions/workflow-rule.mjs` writes a fixed rule into its named prompt section every turn. Every new request starts at `choosing-a-workflow`; on the first request in an attached project session, existing source code without a durable spec graph triggers setup/import before the request, then the request resumes. Durable specs already present and chats without a project skip automatic setup. This is the only code here outside the fs gateway — see [The standing rule](#the-standing-rule).
+- **Version 1.5.0** — automatic first-session onboarding and original-request resumption; see [CHANGELOG.md](CHANGELOG.md) for details.
 - **A docked view** -- the list sits on top and the detail (spec body) below it. Specs: graph tree,
   filter, full-text search, spec reader with its links and back-links. It is this plugin's only page.
 - **Two commands** -- `ThinkRail: Open`, `ThinkRail: Open Specs`.
@@ -39,7 +36,7 @@ and asks the view to switch to that page.
 | `ui.view` | the ThinkRail tab in the right work panel |
 | `agent.tool.register` | the 7 tools |
 | `agent.prompt.inject` | the 10 skills |
-| `agent.extension` | one module, `extensions/workflow-rule.mjs` — the standing rule. It runs inside the agent process with the agent's tool permissions, so it is **not** covered by the fs gateway below. 16 lines of code (85 with its rationale comment), no imports, no fs, no network. |
+| `agent.extension` | one module, `extensions/workflow-rule.mjs` — the standing rule. It runs inside the agent process with the agent's tool permissions, so it is **not** covered by the fs gateway below. 71 lines total, no imports, no fs, no network. |
 | `fs.read` | index specs anywhere in the project (`scope: ["**/*"]`) |
 | `fs.write` | write specs and the `.thinkrail/` scratch dir (`scope: ["**/*.md", ".thinkrail/**"]`) |
 | `fs.delete` | `spec_delete`, to the system trash, only files this plugin wrote (`own: true`) |
@@ -172,35 +169,32 @@ PI-Desktop 0.15.6 is the supported minimum: it is the first supported version wi
 mechanism needs. This extension never falls back to returning `systemPrompt`; without a section map it
 contributes nothing at all, so the rule goes absent rather than forcing the whole prompt.
 
-What it says (four lines of rule; the file is 85 lines, only 16 of them code — the rest is the comment explaining why):
+What it says (four lines of rule; the module is 71 lines including comments explaining the host contract):
 
-- at the start of a new piece of work, read `choosing-a-workflow` for project onboarding or any PR
-  lifecycle work;
-- for other new changes, read it only when product scope, user-visible behavior, or architecture
-  remains to decide;
-- continue work already routed to a workflow without routing it again; otherwise proceed directly
-  without loading or announcing one;
-- before classifying, check whether the project has a spec graph at all — an existing codebase with
-  none is the onboarding case, so say so and let the user decide.
+- at the start of **every new piece of work**, read the `choosing-a-workflow` skill first using its PI skill id;
+- on the first request in an attached project session, automatically set up existing source code with no durable spec graph before acting, whatever the request asks;
+- after setup, resume the queued original request; any project change goes through brainstorming, **however small or fully specified**;
+- chats without an attached project do not trigger setup, and continuations stay in their active workflow.
 
-One sentence of this rule is a deliberate departure from upstream: the spec-graph precondition. It is
-weaker than a route — it asks the agent to *establish* whether a graph exists and hand the onboarding
-choice to the user, rather than sending every change in a spec-less repo into the setup flow; the
-router's own red flags say a forced route is worse than none. The other former departure is gone: this
-plugin used to state that a pure question needs no routing, because upstream's old rule named "a
-request, feature, change, fix, or fresh project idea" while its router description claimed questions
-— the drift its own spec recorded. Upstream #485 settled it (the rule's "otherwise proceed directly"
-covers questions, and the router description now lists them as not routed), so that sentence was
-retired and the first three lines here are upstream verbatim.
+The durable-graph check ignores temporary task-specs under `.thinkrail/context/`. A project that already has
+a durable spec graph skips automatic onboarding. The setup worker drafts the graph, then returns to the
+first request rather than consuming it.
+
+This development source deliberately adds automatic first-session onboarding for code-only projects to
+the restored pre-#485 broad workflow entry. The behavior is a local workflow choice; it does not revert
+the later prompt-section delivery or other carrier/API fixes. The root router still classifies onboarding,
+PR lifecycle, project changes, and direct-answer requests. Brainstorming must be explicitly approved before
+it writes durable SPECs or implementation code.
 
 **The trade-off, plainly:** a module declared under `contributes.agentExtensions` runs inside the
 agent process with the agent's own tool permissions. It is not covered by the fs gateway, so the
 plugin's permission story is no longer "only markdown, only through the gateway". That is why the
 module imports nothing, touches no filesystem and no network, and is kept small enough to read before
-you approve it (16 lines of code) — and why the install permission review shows `agent.extension` with
+you approve it — and why the install permission review shows `agent.extension` with
 the host's own warning ("Enable only code you trust"). If you would rather not grant it, the same
 effect is available without any new permission by putting the rule in your `AGENTS.md` (one layer
 earlier, and per-project) — see above.
+
 
 ## Behaviour notes
 
