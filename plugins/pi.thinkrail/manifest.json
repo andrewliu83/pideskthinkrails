@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "pi.thinkrail",
   "name": "ThinkRail",
-  "version": "1.5.1",
+  "version": "1.5.2",
   "description": "ThinkRail for PI-Desktop: a spec-graph the agent can read, query and maintain (7 spec_* tools), 10 workflow skills (including the authoring checklist for the family), and a panel with a specs browser.",
-  "changelog": "1.5.1: Deliver the standing workflow rule over whichever channel the running host actually reads. PI-Desktop 0.20.x replaced the extension runner, hard-coding `systemPromptOptions` to `{}` and merging only a returned `systemPrompt`, so writing `sections[name]` had become a silent no-op and the router stopped firing while the plugin still loaded. The section channel stays first for hosts that expose a section map; with no map the same rule is appended to the end of the system prompt wrapped in `<pi-thinkrail-workflow>` tags, preserving the host prompt and staying idempotent. Carries over 1.5.0's automatic first-request onboarding, the pre-#485 broad router, specs-before-code lookup, and the approved-design-before-build gate.",
+  "changelog": "1.5.2: The spec-graph no longer counts a brainstorming draft as project state. task-spec files under `.thinkrail/context/` were indexed as ordinary specs, so a code-only project holding nothing but a draft read as `durable spec graph present` and the router's automatic first-session onboarding was skipped; spec_graph, spec_grep, spec_validate and the panel now share the rule's definition of durable. Drafts stay usable: spec_create still writes into `.thinkrail/context/`, and spec_update / spec_delete still resolve them by id. Carries over 1.5.1's dual-channel rule delivery and 1.5.0's onboarding, broad router, specs-before-code lookup, and approved-design-before-build gate.",
   "i18n": {
     "en": {
       "name": "ThinkRail",

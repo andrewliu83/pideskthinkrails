@@ -1,5 +1,11 @@
 # ThinkRail for PI-Desktop — Changelog
 
+## 1.5.2
+
+- The spec-graph no longer counts a `brainstorming` draft as project state. `task-spec` files under `.thinkrail/context/` were being indexed as ordinary specs, so a code-only project holding nothing but a draft read as "durable spec graph present" and the router's automatic first-session onboarding was skipped. `spec_graph`, `spec_grep`, `spec_validate` and the panel now share the rule's definition of durable: a draft is not a graph.
+- Drafts stay fully usable: `spec_create` still writes into `.thinkrail/context/`, and `spec_update` / `spec_delete` still resolve them by id, because those read the full scan rather than the graph.
+- Cover both halves in tests: a project holding only drafts has an empty graph, and a real spec still counts while its draft stays writable and addressable.
+
 ## 1.5.1
 
 - Deliver the standing workflow rule over whichever channel the running host actually reads. PI-Desktop 0.20.x replaced the extension runner: `emitBeforeAgentStart` now hard-codes `systemPromptOptions` to `{}` and its merger only reads a returned `systemPrompt`, so writing `sections[name]` had become a silent no-op. That is why the router stopped firing: the plugin still loaded, but the rule never reached the model.

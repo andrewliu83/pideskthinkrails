@@ -24,6 +24,26 @@ const { FIELDS, isSpec, parseFile, scalar } = require("./parse.js");
 
 const IGNORED_DIRS = new Set(["node_modules", ".git", "dist", "build"]);
 
+/**
+ * 工作流草稿目录。
+ *
+ * `.thinkrail/context/` 下是 `brainstorming` 写的**临时 task-spec**，不是项目的 durable
+ * spec graph。路由规则（`choosing-a-workflow` 的 preflight）明确要求：判断有没有 durable
+ * graph 时，忽略 `.thinkrail/context/` 下的 task-spec。索引层必须给出同一个答案——否则模型
+ * 查到的图和规则说的不是一回事：一个只有草稿的项目会被读成「已有 spec graph」，于是 onboarding
+ * 被跳过（这正是 pidesktopsolfi 那次会话发生的事）。
+ *
+ * 只影响**图与检索**（`spec_graph` / `spec_grep` / `spec_validate` 与面板）：`spec_create`
+ * 仍然能把草稿写进这个目录，`spec_update` / `spec_delete` 仍然按 id 找得到它，因为那两个走的是
+ * 全量扫描而不是图。把 `.thinkrail` 整个塞进 `IGNORED_DIRS` 会连写入一起挡掉，那不是这里要的。
+ */
+const WORKSPACE_CONTEXT_DIR = ".thinkrail/context";
+
+/** 这份 spec 是否计入 durable graph：草稿目录下的不算。 */
+function isDurable(rel) {
+	return !rel.startsWith(`${WORKSPACE_CONTEXT_DIR}/`);
+}
+
 const SPEC_FILE_EXTENSION = ".md";
 
 /** 宿主 pi.fs.glob 的单次匹配上限；拿到这么多就当作「可能被截断」而不是「正好这么多」。 */
@@ -430,8 +450,10 @@ class SpecIndex {
 		this.lastSpecs = specs;
 		this.lastScanAt = Date.now();
 		if (changed || this.graphCache === null) {
+			// 图只收 durable spec：`.thinkrail/context/` 下的草稿是工作中间态，不是项目的
+			// spec graph。路由规则也是这么判的（见 WORKSPACE_CONTEXT_DIR 的注释）。
 			this.graphCache = buildGraph(
-				specs.map((r) => ({ path: r.rel, frontmatter: r.frontmatter })),
+				specs.filter((r) => isDurable(r.rel)).map((r) => ({ path: r.rel, frontmatter: r.frontmatter })),
 			);
 		}
 		return specs;
@@ -443,11 +465,14 @@ class SpecIndex {
 	}
 
 	async contentEntries(options) {
-		return (await this.scan(options)).map((r) => ({
-			path: r.rel,
-			content: r.content,
-			frontmatter: r.frontmatter,
-		}));
+		// 与图同一口径：`spec_grep` 是「在图里搜」，草稿不在图里，也就不该被它搜出来。
+		return (await this.scan(options))
+			.filter((r) => isDurable(r.rel))
+			.map((r) => ({
+				path: r.rel,
+				content: r.content,
+				frontmatter: r.frontmatter,
+			}));
 	}
 
 	async recordForId(id, options) {
@@ -463,8 +488,10 @@ module.exports = {
 	IGNORED_DIRS,
 	SPEC_FILE_EXTENSION,
 	SpecIndex,
+	WORKSPACE_CONTEXT_DIR,
 	compareRel,
 	hasWindowsNamespaceSyntax,
+	isDurable,
 	resolvePathSegment,
 	resolveSpecPath,
 };

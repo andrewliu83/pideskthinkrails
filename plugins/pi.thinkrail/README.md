@@ -24,7 +24,7 @@ and asks the view to switch to that page.
   `writing-specs`, `asking-user-questions`, `shipping-a-pr`) and `writing-workflow-skills`, the
   authoring checklist and meta-rules for the family itself.
 - **One standing rule (an agent-process extension)** — `extensions/workflow-rule.mjs` writes a fixed rule into the host prompt every turn (named section, or appended block on 0.20.x+). Every new request starts at `choosing-a-workflow`; on the first request in an attached project session, existing source code without a durable spec graph triggers setup/import before the request, then the request resumes. Durable specs already present and chats without a project skip automatic setup. This is the only code here outside the fs gateway — see [The standing rule](#the-standing-rule).
-- **Version 1.5.1** — the standing rule now reaches the model on PI-Desktop 0.20.x too (dual-channel delivery); carries 1.5.0's automatic first-session onboarding and original-request resumption. See [CHANGELOG.md](CHANGELOG.md) for details.
+- **Version 1.5.2** — a `brainstorming` draft under `.thinkrail/context/` no longer counts as project state, so a code-only project gets its automatic first-session onboarding instead of reading as "already specced"; carries 1.5.1's dual-channel rule delivery and 1.5.0's onboarding. See [CHANGELOG.md](CHANGELOG.md) for details.
 - **A docked view** -- the list sits on top and the detail (spec body) below it. Specs: graph tree,
   filter, full-text search, spec reader with its links and back-links. It is this plugin's only page.
 - **Two commands** -- `ThinkRail: Open`, `ThinkRail: Open Specs`.

@@ -1030,6 +1030,78 @@ test("a directory whose real name is not ignored byte-for-byte survives the list
   }
 });
 
+// ── durable graph vs. 工作草稿 ──────────────────────────────────────────────
+//
+// 路由规则说得很清楚：判断「有没有 durable spec graph」时，忽略 `.thinkrail/context/` 下的
+// task-spec。索引层一度不这么算，于是「只有一份 brainstorming 草稿」的项目会被读成「已有
+// spec graph」，onboarding 因此被跳过——pidesktopsolfi 那次会话就是这么错的。这两条测试把
+// 「图与规则同一口径」和「草稿仍可写、仍可按 id 找到」一起钉住。
+
+test("a project holding only .thinkrail/context drafts has no durable spec graph", async () => {
+  const ctx = setup();
+  try {
+    mkdirSync(join(ctx.projectDir, ".thinkrail/context"), { recursive: true });
+    writeFileSync(
+      join(ctx.projectDir, ".thinkrail/context/TASK-draft.md"),
+      "---\nid: task-draft\ntype: task-spec\ntitle: Draft\nstatus: draft\n---\n",
+    );
+    // 一个真正的源码文件，让夹具更像「有代码、没图」的实际项目。
+    writeFileSync(join(ctx.projectDir, "main.js"), "module.exports = {};\n");
+
+    const index = indexOf(ctx);
+    const graph = await index.graph();
+    assert.equal(
+      graph.nodes.size,
+      0,
+      "a draft task-spec under .thinkrail/context must not count as a durable spec graph",
+    );
+    assert.equal(
+      (await index.contentEntries()).length,
+      0,
+      "spec_grep searches the graph, so drafts must not surface there either",
+    );
+  } finally {
+    ctx.cleanup();
+  }
+});
+
+test("a durable spec still counts while drafts stay writable and addressable by id", async () => {
+  const ctx = setup();
+  try {
+    await main.onLoad();
+    // 真实的 durable spec：不在草稿目录下。
+    mkdirSync(join(ctx.projectDir, "src"), { recursive: true });
+    writeFileSync(
+      join(ctx.projectDir, "src/SPEC.md"),
+      "---\nid: src-module\ntype: module-design\ntitle: Src\n---\n",
+    );
+    // 草稿：brainstorming 的落点。
+    await call(ctx.host.tools.get("spec_create"), {
+      path: ".thinkrail/context/TASK-work.md",
+      id: "task-work",
+      type: "task-spec",
+      title: "Work",
+    });
+
+    const index = indexOf(ctx);
+    const graph = await index.graph();
+    assert.deepEqual(
+      [...graph.nodes.keys()],
+      ["src-module"],
+      "only the durable spec belongs to the graph",
+    );
+    // 写入路径没有被图的口径挡住：草稿写成功了，而且仍能按 id 取到（spec_update 走的就是这条）。
+    assert.equal(await index.pathForId("task-work"), ".thinkrail/context/TASK-work.md");
+    assert.equal(
+      readFileSync(join(ctx.projectDir, ".thinkrail/context/TASK-work.md"), "utf8").includes("id: task-work"),
+      true,
+      "spec_create still writes drafts into the workflow context dir",
+    );
+  } finally {
+    ctx.cleanup();
+  }
+});
+
 test("the index is ordered the way the upstream walk yields paths", async () => {
   const ctx = setup();
   try {
