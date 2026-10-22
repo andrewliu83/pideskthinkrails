@@ -746,11 +746,13 @@ test("the standing-rule module is declared with its permission and stays auditab
   assert.deepEqual([...handlers.keys()], ["before_agent_start"], "one hook, the supported one");
 
   const base = "# Skills\n\n- `pi.thinkrail/choosing-a-workflow` — …";
-  // 投递方式与上游一致：写自己的命名 section，且**不返回 systemPrompt**——后者会被宿主当成强制整条
-  // 提示，而那条路的语义是丢掉所有结构化 section（别的插件的贡献也一起没了）。
+
+  // ── 通道 1（0.15.x–0.19.x 与上游）：有命名 section 表就只写 section ────────────────
+  // 「不返回 systemPrompt」在这条通道上必须保持：那种语义在带 section 表的宿主里是丢掉所有
+  // 结构化 section（别的插件的贡献也一起没了），上游正是不用那条路。
   const options = { sections: {} };
   const result = handlers.get("before_agent_start")({ systemPrompt: base, systemPromptOptions: options });
-  assert.equal(result.systemPrompt, undefined, "never forces the whole prompt");
+  assert.equal(result.systemPrompt, undefined, "with a section map, never forces the whole prompt");
   assert.equal(
     options.sections[mod.WORKFLOW_SECTION],
     mod.WORKFLOW_RULE,
@@ -796,13 +798,45 @@ test("the standing-rule module is declared with its permission and stays auditab
   );
   for (const id of ids) assert.ok(declaredIds.has(id), `rule points at an undeclared skill: ${id}`);
 
-  // 没有 section 表的宿主（老版本，或事件形状换了）：什么都不贡献、也不抛错——宁可规则缺席，
-  // 也不退回"强制整条提示"那条路。
+  // ── 通道 2（0.20.x 起）：sections 通道已不被读取，规则要落到 systemPrompt 尾部 ──────────
+  //
+  // 0.20.x 的 TrustedExtensionRunner 把 `systemPromptOptions` 硬编码成空对象，合并器只认
+  // `r.systemPrompt`。所以「没有 section 表」不再等于「规则缺席」——那是这次故障本身。
+  const appended = handlers.get("before_agent_start")({ systemPrompt: base });
+  assert.equal(typeof appended.systemPrompt, "string", "without a section map the rule is appended");
+  assert.ok(appended.systemPrompt.startsWith(base), "the host prompt is kept, not replaced");
+  assert.ok(
+    appended.systemPrompt.includes(`<${mod.WORKFLOW_SECTION}>`),
+    "the appended block is tagged so it can be detected",
+  );
+  assert.ok(appended.systemPrompt.includes(mod.WORKFLOW_RULE), "the whole rule is delivered");
+  assert.ok(
+    appended.systemPrompt.trimEnd().endsWith(`</${mod.WORKFLOW_SECTION}>`),
+    "the block ends the prompt — the strongest instruction position",
+  );
+
+  // 幂等：宿主重跑钩子、或同一轮被调用两次，都不许叠出第二份规则。
+  assert.deepEqual(
+    handlers.get("before_agent_start")({ systemPrompt: appended.systemPrompt }),
+    {},
+    "an already-appended rule is not appended twice",
+  );
+
+  // 两条通道不叠加：带 section 表时不再追加整条提示。
+  const both = handlers.get("before_agent_start")({ systemPrompt: base, systemPromptOptions: { sections: {} } });
+  assert.equal(both.systemPrompt, undefined, "the section map wins; no double delivery");
+
+  // 拿不到提示就什么都不做，也不抛错——绝不凭空造一条提示。
   assert.deepEqual(handlers.get("before_agent_start")({}), {}, "no event: contribute nothing");
   assert.deepEqual(
-    handlers.get("before_agent_start")({ systemPrompt: base }),
+    handlers.get("before_agent_start")({ systemPrompt: "" }),
     {},
-    "a host without a section map gets nothing, not a forced prompt",
+    "an empty prompt is left alone",
+  );
+  assert.deepEqual(
+    handlers.get("before_agent_start")({ systemPrompt: 42 }),
+    {},
+    "a non-string prompt is left alone",
   );
 });
 

@@ -23,8 +23,8 @@ and asks the view to switch to that page.
   `setting-up-a-project`, `starting-a-new-project`, `importing-a-codebase`, `brainstorming`,
   `writing-specs`, `asking-user-questions`, `shipping-a-pr`) and `writing-workflow-skills`, the
   authoring checklist and meta-rules for the family itself.
-- **One standing rule (an agent-process extension)** — `extensions/workflow-rule.mjs` writes a fixed rule into its named prompt section every turn. Every new request starts at `choosing-a-workflow`; on the first request in an attached project session, existing source code without a durable spec graph triggers setup/import before the request, then the request resumes. Durable specs already present and chats without a project skip automatic setup. This is the only code here outside the fs gateway — see [The standing rule](#the-standing-rule).
-- **Version 1.5.0** — automatic first-session onboarding and original-request resumption; see [CHANGELOG.md](CHANGELOG.md) for details.
+- **One standing rule (an agent-process extension)** — `extensions/workflow-rule.mjs` writes a fixed rule into the host prompt every turn (named section, or appended block on 0.20.x+). Every new request starts at `choosing-a-workflow`; on the first request in an attached project session, existing source code without a durable spec graph triggers setup/import before the request, then the request resumes. Durable specs already present and chats without a project skip automatic setup. This is the only code here outside the fs gateway — see [The standing rule](#the-standing-rule).
+- **Version 1.5.1** — the standing rule now reaches the model on PI-Desktop 0.20.x too (dual-channel delivery); carries 1.5.0's automatic first-session onboarding and original-request resumption. See [CHANGELOG.md](CHANGELOG.md) for details.
 - **A docked view** -- the list sits on top and the detail (spec body) below it. Specs: graph tree,
   filter, full-text search, spec reader with its links and back-links. It is this plugin's only page.
 - **Two commands** -- `ThinkRail: Open`, `ThinkRail: Open Specs`.
@@ -36,7 +36,7 @@ and asks the view to switch to that page.
 | `ui.view` | the ThinkRail tab in the right work panel |
 | `agent.tool.register` | the 7 tools |
 | `agent.prompt.inject` | the 10 skills |
-| `agent.extension` | one module, `extensions/workflow-rule.mjs` — the standing rule. It runs inside the agent process with the agent's tool permissions, so it is **not** covered by the fs gateway below. 71 lines total, no imports, no fs, no network. |
+| `agent.extension` | one module, `extensions/workflow-rule.mjs` — the standing rule. It runs inside the agent process with the agent's tool permissions, so it is **not** covered by the fs gateway below. 93 lines total, no imports, no fs, no network. |
 | `fs.read` | index specs anywhere in the project (`scope: ["**/*"]`) |
 | `fs.write` | write specs and the `.thinkrail/` scratch dir (`scope: ["**/*.md", ".thinkrail/**"]`) |
 | `fs.delete` | `spec_delete`, to the system trash, only files this plugin wrote (`own: true`) |
@@ -155,21 +155,30 @@ export default function workflowRule(pi) {
 ```
 
 `before_agent_start` is a trusted, result-returning hook in the host's sidecar, and writing into a
-**named prompt section** is exactly how upstream ThinkRail installs its two always-on rules — returning
-nothing ("so pi patches that one section instead of forcing a whole prompt"). This plugin follows that
-mechanism rather than the alternative: returning `{ systemPrompt }` makes the host **force** the whole
-system message, and the host's force semantics drop every structured section — ours and any other
-plugin's. Writing into `sections` works because the runner hands extensions a mutable copy of the
-prompt options and adopts it afterwards. Section names must match the host's own pattern
-(`/^[a-z][a-z0-9_-]*$/`, never `preamble`; a bad name throws while the prompt is composed, so
-`tests/manifest-host-check.test.mjs` checks ours against the host's live regex and against the runner's
-adopt-the-mutation path). The composed prompt renders each section as
-`<pi-thinkrail-workflow>…</pi-thinkrail-workflow>` and **ends** with it, still the strongest instruction position the app offers, after your `AGENTS.md`.
-PI-Desktop 0.15.6 is the supported minimum: it is the first supported version with the section map this
-mechanism needs. This extension never falls back to returning `systemPrompt`; without a section map it
-contributes nothing at all, so the rule goes absent rather than forcing the whole prompt.
+**named prompt section** is how upstream ThinkRail installs its two always-on rules — returning
+nothing ("so pi patches that one section instead of forcing a whole prompt"). This plugin used only
+that mechanism until 1.5.1; PI-Desktop 0.20.x replaced the runner, so the rule now travels over
+**whichever channel the running host actually reads**:
 
-What it says (four lines of rule; the module is 71 lines including comments explaining the host contract):
+1. **Section channel** (PI-Desktop 0.15.x–0.19.x, and upstream pi): write into `sections`, which works
+   because that runner hands extensions a mutable copy of the prompt options and adopts it afterwards.
+   Section names must match the host's own pattern (`/^[a-z][a-z0-9_-]*$/`, never `preamble`; a bad
+   name throws while the prompt is composed, so `tests/manifest-host-check.test.mjs` checks ours
+   against the host's live regex).
+2. **Append channel** (PI-Desktop 0.20.x and newer): that runner hard-codes `systemPromptOptions` to an
+   empty object and its merger only reads a returned `systemPrompt` string, so writing `sections` there
+   is a silent no-op — which is exactly why the router stopped firing. The module therefore appends the
+   same rule, wrapped in `<pi-thinkrail-workflow>` tags, to the end of the prompt and returns the
+   combined string. The host prompt is preserved rather than replaced, and the append is idempotent (a
+   prompt already holding the block is left untouched). Extensions compose serially, so this does not
+   clobber another plugin's contribution.
+
+The composed prompt renders each section as `<pi-thinkrail-workflow>…</pi-thinkrail-workflow>` and
+**ends** with it, still the strongest instruction position the app offers, after your `AGENTS.md`.
+PI-Desktop 0.15.6 is the supported minimum. With no section map and no prompt to append to, the module
+contributes nothing at all, so the rule goes absent rather than corrupting the prompt.
+
+What it says (four lines of rule; the module is 93 lines including comments explaining the host contract):
 
 - at the start of **every new piece of work**, read the `choosing-a-workflow` skill first using its PI skill id;
 - on the first request in an attached project session, automatically set up existing source code with no durable spec graph before acting, whatever the request asks;

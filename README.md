@@ -76,9 +76,9 @@ DSH 版与上游 ThinkRail 的对应关系（哪些是移植、哪些是有意�
     新增 symlink fixture 从宿主 main bundle 提取并执行 `resolveFsRequest`、`resolveRealPathWithinRoot` 和 `resolveRealPathForCreateWithinRoot`，对临时 workspace 的文件/目录链接验证项目外读写被拒。
   - `thinkrail.test.mjs`：假宿主按 manifest scope 拒绝越界写入，验证插件声明的调用范围。
 - **边界说明：**symlink fixture 执行宿主原始路径 resolver，但将权限/scope 与文件 API 调用端控制在测试中；`host-load` 的 `fs.*` 响应也是 mock。因此它验证 resolver 的真实 realpath containment，不等同于完整 Electron IPC、授权 UI 或并发 symlink race 的端到端测试。
-- `python3 scripts/pack_plugin.py plugins/pi.thinkrail` 生成当前包 `packages/pi.thinkrail-1.5.0.piplug`（git 忽略，不随源码提交）。
-  130 个文件，ZIP 561271 字节，解压 541929 字节；sha256 `703bc8a9fd7c470ab4a007edf458421e3bd5f7adc2c6ef1fb11267c2db863c20`。
-- `python3 scripts/security_audit.py --check-packages` —— 当前 1.5.0 包审计 **0 blocker、4 条 manual-review 信号**；自动检查通过，人工复核信号见下。
+- `python3 scripts/pack_plugin.py plugins/pi.thinkrail` 生成当前包 `packages/pi.thinkrail-1.5.1.piplug`（git 忽略，不随源码提交）。
+  130 个文件，ZIP 564807 字节，解压 545465 字节；sha256 `3694c1057f6eb463d566e4758c76f7829386eaf3c03163b570a36303fe4524fe`。
+- `python3 scripts/security_audit.py --check-packages` —— 当前 1.5.1 包审计 **0 blocker、4 条 manual-review 信号**；自动检查通过，人工复核信号见下。
   脚本是 marketplace 工具的**原件照抄**，`agent.extension` 会被它作为未知权限报给宿主策略复核——那是预期信号，不是缺陷。
 - 索引与面板读路径在真实项目上量过（`直播`，11672 个目录 / 573 个 `.md` / 11 个 spec），
   单位是**宿主的 fs API 调用次数**——每次调用都是一趟进程间往返外加宿主一条审计日志：
@@ -108,9 +108,9 @@ DSH 版与上游 ThinkRail 的对应关系（哪些是移植、哪些是有意�
 
 ## 升级已装好的那份
 
-宿主安装插件时会**复制**到 `~/.pi-desktop/plugins/installed/<id>/`，仓库里的改动不会自动过去。1.5.0 恢复宽入口并增加首会话自动 setup；若已安装旧版，需要更新安装：
+宿主安装插件时会**复制**到 `~/.pi-desktop/plugins/installed/<id>/`，仓库里的改动不会自动过去。1.5.1 修好了常驻规则的投递通道（0.20.x 换了 runner 导致规则静默失效）；若已安装旧版，需要更新安装：
 
-1. **Plugins → Install plugin package** 选择 `packages/pi.thinkrail-1.5.0.piplug`；若不能覆盖，先 Remove 再装。
+1. **Plugins → Install plugin package** 选择 `packages/pi.thinkrail-1.5.1.piplug`；若不能覆盖，先 Remove 再装。
 2. 或用 **Plugins → Load dev plugin** 选择 `plugins/pi.thinkrail`，直接运行当前源码。
 3. 安装/加载后按 `Mod+J` 打开 ThinkRail 面板。
 
@@ -142,11 +142,14 @@ PI-Desktop 有三套技能目录，最后**合并成同一段提示**送给模�
 
 所以**描述就是常驻指令**（这也是我把 6 条过长的描述改写到 240 字符以内的原因——超出的部分会被
 宿主截断，而被截掉的正好是"不适用时该用什么"那半句路由信息），**正文由模型按 id 用 `Skill`
-工具按需取**。这一块 + `1.2.0` 起的常驻规则（`extensions/workflow-rule.mjs`，见下节；1.4.1 起写入宿主
-具名 prompt section `pi-thinkrail-workflow`，不再强制替换整条提示）才是 DSH 常驻规则的等价物。当前 1.5.0
+工具按需取**。这一块 + `1.2.0` 起的常驻规则（`extensions/workflow-rule.mjs`，见下节）才是 DSH 常驻规则的等价物。
+该规则的**投递通道**随宿主版本二选一：宿主提供具名 prompt section 表时（0.15.x–0.19.x 与上游 pi）写自己的
+`pi-thinkrail-workflow` section；宿主没有那张表时（0.20.x 起把 options 硬编码成空对象、只认返回的
+`systemPrompt` 字符串）把同一段文字用 `<pi-thinkrail-workflow>` 标签包好追加到提示尾部——1.5.1 之前只写
+section，于是在 0.20.x 上静默失效，规则根本没到过模型。当前 1.5.1
 开发源恢复 pre-#485 宽入口：每个新请求先过 router，任何项目改动都进入 brainstorming，不因规模小或规格明确
 而跳过。另在附加项目会话的首条请求前检查 durable graph：有源码但无图时自动 setup/import，再续接原请求；已有图
-或无项目聊天跳过自动 setup。已打包的旧 1.4.1 产物不包含此行为，安装前请使用 1.5.0 包或 Load dev plugin。
+或无项目聊天跳过自动 setup。已打包的旧 1.5.0 及更早产物不包含这条通道，安装前请使用 1.5.1 包或 Load dev plugin。
 
 这段块在会话运行时构造时生成，但**不需要新开会话**：sidecar 的 `canReuse(config)` 把技能目录的
 digest 也算进"能不能复用这个运行时"的判断里，并注明——

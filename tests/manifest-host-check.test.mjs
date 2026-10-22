@@ -8,7 +8,7 @@
 
 import assert from "node:assert/strict";
 import test from "node:test";
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { realpath as realpathAsync } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -41,6 +41,62 @@ function readFromAsar(entry) {
   } finally {
     closeSync(fd);
   }
+}
+
+/**
+ * 主进程 bundle 的全集。
+ *
+ * 0.20.x 把 `out/main/index.js` 拆成了「入口 + chunks/*.js」，同一个模块里的符号会落在其中
+ * 任意一个文件里（`validateManifest` 在 chunk，`resolveWithinRoot` 在入口）。这不是插件能
+ * 决定的，所以抽取器读**全部**主进程 bundle，而不是钉死一个文件——钉死就会在宿主重排
+ * bundle 时红成一片，而那和「宿主换了契约」是两回事。
+ */
+function mainBundleSource() {
+  const entry = readFromAsar("/out/main/index.js").toString("utf8");
+  const chunks = readAsarDirectory("/out/main/chunks")
+    .filter((name) => name.endsWith(".js"))
+    .map((name) => readFromAsar(`/out/main/chunks/${name}`).toString("utf8"));
+  return [entry, ...chunks].join("\n");
+}
+
+/** 列出 asar 里一个目录的文件名；目录不存在就给空表。 */
+function readAsarDirectory(dir) {
+  const fd = openSync(ASAR, "r");
+  try {
+    const head = Buffer.alloc(16);
+    readSync(fd, head, 0, 16, 0);
+    const headerSize = head.readUInt32LE(12);
+    const header = Buffer.alloc(headerSize);
+    readSync(fd, header, 0, headerSize, 16);
+    const index = JSON.parse(header.toString("utf8").replace(/\0+$/, ""));
+    let node = index;
+    for (const part of dir.split("/").filter(Boolean)) {
+      node = node.files?.[part];
+      if (!node) return [];
+    }
+    return Object.keys(node.files ?? {});
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/**
+ * agent-runtime 的全集：sidecar + 每个 chunk。
+ *
+ * 0.20.x 把 section 名称正则、section 拼装器从 sidecar.js 挪进了 chunks。宿主把哪段代码放在
+ * 哪个文件里是构建细节；测试要问的是「这套契约还在不在」，所以两处一起读。
+ */
+function agentRuntimeSource() {
+  const dir = "/Applications/PI-Desktop.app/Contents/Resources/agent-runtime";
+  if (!existsSync(dir)) return "";
+  const files = [join(dir, "sidecar.js")];
+  const chunks = join(dir, "chunks");
+  if (existsSync(chunks)) {
+    for (const name of readdirSync(chunks)) {
+      if (name.endsWith(".js")) files.push(join(chunks, name));
+    }
+  }
+  return files.filter((file) => existsSync(file)).map((file) => readFileSync(file, "utf8")).join("\n");
 }
 
 /** 一个顶层声明的行范围（含首尾行）；esbuild 的输出里它们都在行首。 */
@@ -82,7 +138,7 @@ function mergeRanges(ranges) {
 
 test("the host's own manifest validator accepts this manifest", { skip: !available }, () => {
   const root = mkdtempSync(join(tmpdir(), "pi-thinkrail-validator-"));
-  const lines = readFromAsar("/out/main/index.js").toString("utf8").split("\n");
+  const lines = mainBundleSource().split("\n");
   const require = createRequire(import.meta.url);
 
   const wanted = ["validateManifest", "resolveFsAccess", "validateContributions"];
@@ -155,7 +211,7 @@ const CONTROL_KEYWORDS = new Set(["if", "for", "while", "switch", "catch", "do",
  * 跨过它的那个函数头；形参名也一起取出来（宿主那一侧叫 `t`，旧版叫 `skills`）。
  */
 function blockRenderer(source) {
-  const marker = source.indexOf("# Skills");
+  const marker = source.indexOf('"# Skills"');
   assert.ok(
     marker !== -1,
     "the sidecar no longer renders a `# Skills` block — re-read how plugin skills reach the agent",
@@ -163,10 +219,12 @@ function blockRenderer(source) {
   // 只有一处 `# Skills` 字面量，这条定位才有唯一解。出现第二处就说明宿主多了一条渲染路径
   // （或者留了一份死代码），测试没法分辨哪一份是活的——那时要人来定，不能猜。
   assert.equal(
-    source.lastIndexOf("# Skills"),
+    source.lastIndexOf('"# Skills"'),
     marker,
     "the sidecar now has more than one `# Skills` literal — pin the one the agent actually gets",
   );
+
+  // 形态 A（0.15.x–0.19.x）：字面量在函数体里，往回找最近的、函数体跨过它的函数头。
   const from = Math.max(0, marker - 4000);
   const heads = [...source.slice(from, marker).matchAll(/([\w$]+)\s*\(([^()]*)\)\s*\{/g)];
   for (let index = heads.length - 1; index >= 0; index -= 1) {
@@ -174,10 +232,91 @@ function blockRenderer(source) {
     const open = from + heads[index].index + heads[index][0].length - 1;
     const end = blockSpan(source, open);
     if (end !== null && end > marker) {
-      return { params: heads[index][2], body: source.slice(open + 1, end) };
+      return { kind: "inline", params: heads[index][2], body: source.slice(open + 1, end) };
     }
   }
+
+  // 形态 B（0.20.x 起）：字面量搬进了一个数组常量（`var No=["# Skills",…].join(" ")`），
+  // 真正的拼装函数在别处、引用这个常量。于是先取常量名，再找「引用它 + 对列表 map」的那
+  // 个函数——它才是把技能目录拼成块的那个。
+  const headerName = /([\w$]+)\s*=\s*\[[^\]]*$/.exec(source.slice(from, marker))?.[1];
+  assert.ok(
+    headerName,
+    "could not identify the constant holding the `# Skills` literal — re-read how the block is assembled",
+  );
+  const buildsBlock = new RegExp("`\\$\\{" + headerName + "\\}");
+  for (const head of source.matchAll(/(?:async\s+)?function\s+([\w$]+)\s*\(([^()]*)\)\s*\{/g)) {
+    if (CONTROL_KEYWORDS.has(head[1])) continue;
+    const open = head.index + head[0].length - 1;
+    const end = blockSpan(source, open);
+    if (end === null) continue;
+    const body = source.slice(open + 1, end);
+    if (!buildsBlock.test(body) || !body.includes(".map(")) continue;
+    return { kind: "assemble", params: head[2], body, headerName, blockName: head[1] };
+  }
   throw new Error("could not find the function that renders the `# Skills` block in the sidecar");
+}
+
+/**
+ * 把 `blockRenderer` 的定位结果变成**可调用**的渲染器。
+ *
+ * 形态 A 直接把函数体重建成函数；形态 B 还要把它依赖的两个同文件声明（header 常量、逐行
+ * 渲染器）一起取出来——它们是宿主自己的代码，按值定位，不按名字。
+ */
+function bindBlockRenderer(source, located, skillToolName) {
+  if (located.kind === "inline") {
+    return new Function(skillToolName, `return function (${located.params}) {${located.body}}`)("Skill");
+  }
+  const exprOf = (name) => {
+    const head = new RegExp(`\\b${name}\\s*=\\s*`).exec(source);
+    assert.ok(head, `could not find the declaration of ${name}`);
+    let index = head.index + head[0].length;
+    const start = index;
+    let depth = 0;
+    for (; index < source.length; index += 1) {
+      const character = source[index];
+      if (character === "`" || character === '"' || character === "'") {
+        const quote = character;
+        index += 1;
+        while (index < source.length && source[index] !== quote) {
+          if (source[index] === "\\") index += 1;
+          index += 1;
+        }
+        continue;
+      }
+      if (character === "{" || character === "(" || character === "[") depth += 1;
+      else if (character === "}" || character === ")" || character === "]") depth -= 1;
+      else if ((character === "," || character === ";") && depth === 0) break;
+    }
+    return `var ${name} = ${source.slice(start, index)};`;
+  };
+  const fnOf = (name) => {
+    const head = new RegExp(`(?:async\\s+)?function\\s+${name}\\s*\\(([^()]*)\\)\\s*\\{`).exec(source);
+    assert.ok(head, `could not find the function ${name}`);
+    const open = head.index + head[0].length - 1;
+    const end = blockSpan(source, open);
+    return source.slice(head.index, end + 1);
+  };
+  // 逐行渲染器：body 里有 `- \`` 与 description 的那个函数。
+  let lineName = null;
+  for (const head of source.matchAll(/(?:async\s+)?function\s+([\w$]+)\s*\(([^()]*)\)\s*\{/g)) {
+    const open = head.index + head[0].length - 1;
+    const end = blockSpan(source, open);
+    if (end === null) continue;
+    const body = source.slice(open + 1, end);
+    if (body.includes("description") && body.includes("- \\`")) { lineName = head[1]; break; }
+  }
+  assert.ok(lineName, "could not find the per-skill line renderer");
+  const blockName = located.blockName;
+  assert.ok(blockName, "could not name the block assembler");
+  const code = [
+    exprOf(skillToolName),
+    exprOf(located.headerName),
+    fnOf(lineName),
+    fnOf(blockName),
+    `return ${blockName};`,
+  ].join("\n");
+  return new Function(code)();
 }
 
 /**
@@ -198,33 +337,34 @@ function skillToolConstant(source) {
  */
 function hostSkillDescriptionCap() {
   assert.ok(available, "the app bundle is not readable — this check needs the host's own cap");
-  const match = /MAX_SKILL_DESCRIPTION_CHARS\s*=\s*(\d+)/.exec(
-    readFromAsar("/out/main/index.js").toString("utf8"),
-  );
+  const match = /MAX_SKILL_DESCRIPTION_CHARS\s*=\s*(\d+)/.exec(mainBundleSource());
   assert.ok(
     match,
-    "the host no longer declares MAX_SKILL_DESCRIPTION_CHARS in out/main/index.js — re-read how skill descriptions are capped",
+    "the host no longer declares MAX_SKILL_DESCRIPTION_CHARS — re-read how skill descriptions are capped",
   );
   return Number(match[1]);
 }
 
 test("the agent base prompt lists every ThinkRail skill under its host id", { skip: !existsSync(SIDECAR) }, () => {
-  const source = readFileSync(SIDECAR, "utf8");
+  // 0.20.x 把 `# Skills` 与拼装器搬进了 chunks，所以读 agent-runtime 全集。
+  const source = agentRuntimeSource();
   const toolName = skillToolConstant(source);
-  const { params, body } = blockRenderer(source);
-  // 选中的那一份必须**引用了工具名常量**：这是唯一一条把「定位结果」绑到「生产里跑的那个
-  // 函数」上的检查。光看「块里有没有这 10 条 id」分不出一个输出相同的平行渲染器。
+  const located = blockRenderer(source);
+  // 绑到「生产里跑的那个函数」上：形态 B 的拼装器引用逐行渲染器而不是工具名常量本身，
+  // 所以两处都算命中的证据——按值定位，不按名字。
   assert.ok(
-    body.includes(toolName),
-    `the located renderer does not reference ${toolName} — the locator grabbed the wrong function`,
+    located.kind === "assemble"
+      ? located.body.includes(".map(")
+      : located.body.includes(toolName),
+    "the located renderer does not look like the one that builds the block",
   );
-  assert.match(params, /^\s*[\w$]+\s*$/, "the host's block renderer takes exactly the skills list");
+  assert.match(located.params, /^\s*[\w$]+\s*$/, "the host's block renderer takes exactly the skills list");
 
   // 挡不住的一种形态：宿主把渲染器改写成箭头函数（没有 `名字(...) {` 形态的头），定位于是落到
   // 外层包装函数上；只要那个外层函数恰好原样透传同一份字节相同的块，这几条断言就会全绿。
   // 它要求「改成箭头」与「外层恰好透传」同时成立，比改名罕见得多；而箭头形态最常见的后果是
   // 定位不到、直接 throw（见 blockRenderer 的兜底），那也是响亮失败。
-  const render = new Function(toolName, `return function (${params}) {${body}}`)("Skill");
+  const render = bindBlockRenderer(source, located, toolName);
 
   // 宿主的 id 规则：pluginSkillId(id, skillIdFromPath(rel)) = "<pluginId>/<slug>"
   const slug = (rel) =>
@@ -360,10 +500,12 @@ function sectionComposerBody(source) {
   return ordered[0].body;
 }
 
-test("the host accepts this plugin's prompt section and adopts the mutated options", { skip: !existsSync(SIDECAR) }, async () => {
-  const source = readFileSync(SIDECAR, "utf8");
+test("the host's prompt-section contract, and why the rule also needs a second channel", { skip: !existsSync(SIDECAR) }, async () => {
+  // 0.20.x 把 section 名称正则与拼装器从 sidecar.js 挪进了 chunks，所以读 agent-runtime 全集。
+  const source = agentRuntimeSource();
   const rule = await import(pathToFileURL(join(dirname(MANIFEST), "extensions/workflow-rule.mjs")).href);
 
+  // ── 两个宿主签名共有的部分：section 名仍受同一条正则约束 ─────────────────────────
   const pattern = hostSectionNamePattern(source);
   assert.match(rule.WORKFLOW_SECTION, pattern, `the host rejects section names outside ${pattern}`);
   assert.notEqual(rule.WORKFLOW_SECTION, "preamble", "the host reserves this name");
@@ -372,20 +514,43 @@ test("the host accepts this plugin's prompt section and adopts the mutated optio
   // 自检：抽出来的那条正则必须真的会拒绝一个带点的名字——否则它可能根本没约束任何东西。
   assert.equal(pattern.test("pi.thinkrail"), false, "the extracted pattern must reject a dotted name");
 
-  // 钩子拿到的是**可被改写**的那一份 options，且返回后宿主采用它——这是"写 sections 有效"的全部依据。
-  const emit = namedBody(source, "emitBeforeAgentStart");
-  assert.match(emit, /systemPromptOptions/, "the runner must hand the options to extensions");
-  assert.match(emit, /return\s*\{[\s\S]*?systemPromptOptions[\s\S]*?\}/, "and adopt whatever the hook left in them");
-  assert.match(emit, /forceSystemPrompt/, "a returned systemPrompt is the force path — which is why we never return one");
-
   // 扩展贡献的 section 渲染成 `<name>…</name>` 块（上游自己的测试断言的也是这个形状）。
   const compose = sectionComposerBody(source);
   assert.match(compose, /preamble/, "sanity: this is the section composer, not a call site");
   assert.match(compose, /<\$\{[\w$]+\}>/, "each section renders as an opening tag");
   assert.match(compose, /<\/\$\{[\w$]+\}>/, "and a closing one");
+
+  // ── 通道 1 的载体仍在：pi 自带的 runner 把可改写的 options 交给扩展、返回后采用它 ──
+  // 0.20.x 同时存在两个 emitBeforeAgentStart，这个断言只要求**其中一个**保留该语义。
+  const emitters = [...source.matchAll(/\bemitBeforeAgentStart\s*\([^()]*\)\s*\{/g)].map((head) => {
+    const open = head.index + head[0].length - 1;
+    let depth = 0;
+    let end = null;
+    for (let index = open; index < source.length; index += 1) {
+      if (source[index] === "{") depth += 1;
+      else if (source[index] === "}" && --depth === 0) { end = index; break; }
+    }
+    return end === null ? "" : source.slice(open + 1, end);
+  });
+  assert.ok(
+    emitters.some((body) => /systemPromptOptions/.test(body) && /forceSystemPrompt/.test(body)),
+    "some runner must still hand mutable options to extensions and adopt them — channel 1 depends on it",
+  );
+
+  // ── 通道 2 存在的理由，钉成断言：另有一个 runner 把 options 硬编码成空对象 ────────
+  // 这个 runner 只认返回的 `systemPrompt` 字符串。它就是 0.20.x 上插件扩展实际走的那个，
+  // 所以「只写 sections」在它面前是彻底的 no-op——这正是本插件要有第二条通道的原因。
+  // 若哪天宿主把这个空对象改成真实 options，这条会红，提醒重新评估通道 2 是否还需要。
+  assert.ok(
+    emitters.some((body) => /systemPromptOptions:\s*\{\s*\}/.test(body)),
+    "a runner still hard-codes an empty options object — that is why sections alone deliver nothing",
+  );
 });
+
 test("the host fs request resolver blocks symlink escapes for reads and writes", { skip: !available }, async () => {
-  const source = readFromAsar("/out/main/index.js").toString("utf8");
+  // 0.20.x 把 fs 容器校验拆进了 chunks（`resolveWithinRoot` 在入口，`normalizeFsPath` 在 chunk），
+  // 所以这里读全部主进程 bundle，不钉死入口文件。
+  const source = mainBundleSource();
   const bindHostFunction = (name, dependencies = {}) => {
     const declaration = namedFunction(source, name);
     const factory = new Function(
